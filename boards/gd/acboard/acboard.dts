@@ -1,0 +1,54 @@
+/*
+ * Copyright (c) 2026
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/dts-v1/;
+
+#include <arm/gd/gd32e50x/gd32e513xe.dtsi>
+#include "acboard-pinctrl.dtsi"
+
+/ {
+	model = "ACBoard";
+	compatible = "gd,acboard";
+
+	chosen {
+		zephyr,sram = &sram0;
+		zephyr,flash = &flash0;
+		zephyr,console = &uart3;
+		zephyr,shell-uart = &uart3;
+		zephyr,flash-controller = &fmc;
+	};
+
+	leds {
+		compatible = "gpio-leds";
+
+		led0: led_0 {
+			gpios = <&gpioe 8 GPIO_ACTIVE_LOW>;
+		};
+
+		led1: led_1 {
+			gpios = <&gpioe 9 GPIO_ACTIVE_LOW>;
+		};
+	};
+
+	aliases {
+		led0 = &led0;
+		led1 = &led1;
+	};
+};
+
+&gpioc {
+	status = "okay";
+};
+
+&gpioe {
+	status = "okay";
+};
+
+&uart3 {
+	status = "okay";
+	current-speed = <115200>;
+	pinctrl-0 = <&uart3_default>;
+	pinctrl-names = "default";
+};

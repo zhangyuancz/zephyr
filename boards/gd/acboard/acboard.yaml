@@ -1,0 +1,12 @@
+identifier: acboard
+name: ACBoard
+type: mcu
+arch: arm
+ram: 128
+flash: 512
+toolchain:
+  - zephyr
+  - gnuarmemb
+supported:
+  - gpio
+vendor: gd

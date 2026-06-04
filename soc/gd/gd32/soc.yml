@@ -9,6 +9,7 @@ family:
     - name: gd32e103
   - name: gd32e50x
     socs:
+    - name: gd32e513
     - name: gd32e507
   - name: gd32f3x0
     socs:

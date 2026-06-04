@@ -1,0 +1,14 @@
+/*
+ * Copyright (c) 2026
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#include <dt-bindings/pinctrl/gd32e507v(e-c)xx-pinctrl.h>
+
+&pinctrl {
+	uart3_default: uart3_default {
+		group1 {
+			pinmux = <UART3_TX_PC10>, <UART3_RX_PC11>;
+		};
+	};
+};
