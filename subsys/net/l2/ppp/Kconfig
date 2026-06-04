@@ -55,6 +55,22 @@ config NET_L2_PPP_PAP
 	help
 	  Enable support for PAP authentication protocol.
 
+if NET_L2_PPP_PAP
+
+config NET_L2_PPP_PAP_USERNAME
+	string "PAP username"
+	default "blank"
+	help
+	  Username sent in PAP Authenticate-Request packets.
+
+config NET_L2_PPP_PAP_PASSWORD
+	string "PAP password"
+	default "blank"
+	help
+	  Password sent in PAP Authenticate-Request packets.
+
+endif
+
 config NET_L2_PPP_OPTION_MRU
 	bool "LCP MRU option support"
 	help

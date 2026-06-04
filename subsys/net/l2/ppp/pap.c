@@ -21,18 +21,27 @@ static enum net_verdict pap_handle(struct ppp_context *ctx,
 
 static struct net_pkt *pap_config_info_add(struct ppp_fsm *fsm)
 {
-	uint8_t payload[] = { 5, 'b', 'l', 'a', 'n', 'k',
-			      5, 'b', 'l', 'a', 'n', 'k' };
+	static const uint8_t username[] = CONFIG_NET_L2_PPP_PAP_USERNAME;
+	static const uint8_t password[] = CONFIG_NET_L2_PPP_PAP_PASSWORD;
+	uint8_t payload[2 + sizeof(username) - 1 + sizeof(password) - 1];
 	struct net_pkt *pkt;
 	int ret;
+	size_t offset = 0;
 
-	pkt = net_pkt_alloc_with_buffer(ppp_fsm_iface(fsm), sizeof(payload),
+	payload[offset++] = sizeof(username) - 1;
+	memcpy(&payload[offset], username, sizeof(username) - 1);
+	offset += sizeof(username) - 1;
+	payload[offset++] = sizeof(password) - 1;
+	memcpy(&payload[offset], password, sizeof(password) - 1);
+	offset += sizeof(password) - 1;
+
+	pkt = net_pkt_alloc_with_buffer(ppp_fsm_iface(fsm), offset,
 					NET_AF_UNSPEC, 0, PPP_BUF_ALLOC_TIMEOUT);
 	if (!pkt) {
 		return NULL;
 	}
 
-	ret = net_pkt_write(pkt, payload, sizeof(payload));
+	ret = net_pkt_write(pkt, payload, offset);
 	if (ret < 0) {
 		net_pkt_unref(pkt);
 		return NULL;
