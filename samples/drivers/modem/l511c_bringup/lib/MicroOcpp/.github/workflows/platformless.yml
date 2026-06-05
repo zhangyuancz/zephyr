@@ -1,0 +1,32 @@
+# matth-x/MicroOcpp
+# Copyright Matthias Akstaller 2019 - 2024
+# MIT License
+
+name: Default Compilation
+
+on:
+  push:
+    branches:
+      - main
+
+  pull_request:
+
+jobs:
+
+  compile-platform:
+    name: Compile (no linking)
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check out repository code
+      uses: actions/checkout@v3
+    - name: Get gcc compiler
+      run: |
+        sudo apt update
+        sudo apt install build-essential
+        sudo apt -y install gcc-9 g++-9
+        g++ --version
+        echo "g++ version must be 9.4.0"
+    - name: Get ArduinoJson
+      run: wget -Uri https://github.com/bblanchon/ArduinoJson/releases/download/v6.19.4/ArduinoJson-v6.19.4.h -O ./src/ArduinoJson.h
+    - name: Compile
+      run: g++ -c -std=c++11 -I ./src $(find ./src -type f -iregex ".*\.cpp") -DMO_PLATFORM=MO_PLATFORM_NONE -Wall -Wextra -Wno-unused-parameter -Wno-redundant-move -Werror
