@@ -18,6 +18,11 @@
 #include <zephyr/net/net_ip.h>
 #include <zephyr/net/net_mgmt.h>
 #include <zephyr/net/socket.h>
+#include <zephyr/net/tls_credentials.h>
+#include <zephyr/net/websocket.h>
+#include <zephyr/net/sntp.h>
+#include <time.h>
+#include "tls_certificates.h"
 #include <zephyr/sys/printk.h>
 
 #define USER_NODE DT_PATH(zephyr_user)
@@ -37,9 +42,13 @@
 #define MODEM_PDP_APN "cmnet"
 #define MODEM_PPP_BUF_SIZE 512
 #define MODEM_PPP_MTU 1500
-#define TEST_SERVER_HOST "47.111.208.192"
-#define TEST_SERVER_PORT 8443
-#define TEST_ECHO_PAYLOAD "acboard-ppp-echo"
+/* WSS config */
+#define WSS_HOST "47.111.208.192"
+#define WSS_PORT "8443"
+#define WSS_PATH "/"
+#define WSS_SEND_PAYLOAD "acboard-wss-hello"
+#define WSS_RECV_BUF_LEN 512
+#define WSS_TEMP_BUF_LEN 1024
 
 #define PPP_EVENT_CONNECTED BIT(0)
 #define PPP_EVENT_DISCONNECTED BIT(1)
@@ -397,83 +406,166 @@ static void ppp_dump_ipv4(void)
 	}
 }
 
-static int tcp_echo_test(void)
+static uint8_t wss_recv_buf[WSS_RECV_BUF_LEN];
+static uint8_t wss_temp_buf[WSS_TEMP_BUF_LEN];
+static int wss_tls_sock = -1;
+
+static int wss_connect(void)
 {
-	struct zsock_addrinfo hints = {
-		.ai_family = AF_INET,
-		.ai_socktype = SOCK_STREAM,
-	};
+	struct zsock_addrinfo hints = { .ai_family = AF_INET, .ai_socktype = SOCK_STREAM };
 	struct zsock_addrinfo *ai = NULL;
 	struct sockaddr_in peer = {0};
-	char port[6];
-	char addr[NET_IPV4_ADDR_LEN];
-	uint8_t rx[128];
-	int sock = -1;
-	int ret;
+	struct websocket_request ws_req;
+	char addr_str[NET_IPV4_ADDR_LEN];
+	sec_tag_t sec_tags[] = { CA_CERTIFICATE_TAG, CLIENT_CERT_TAG };
+	int sock = -1, ws_fd = -1, ret;
+	int32_t timeout = 15000;
 
-	snprintk(port, sizeof(port), "%u", TEST_SERVER_PORT);
-	printk("resolve: %s:%u\n", TEST_SERVER_HOST, TEST_SERVER_PORT);
+	ret = tls_credential_add(CA_CERTIFICATE_TAG, TLS_CREDENTIAL_CA_CERTIFICATE,
+				 ca_certificate, sizeof(ca_certificate));
+	if (ret < 0) { printk("CA cert add failed: %d\n", ret); return ret; }
+	printk("CA cert reg (tag=%d)\n", CA_CERTIFICATE_TAG);
 
-	ret = zsock_getaddrinfo(TEST_SERVER_HOST, port, &hints, &ai);
-	if (ret != 0 || ai == NULL) {
-		printk("dns failed: %d errno=%d\n", ret, errno);
-		return ret != 0 ? ret : -ENOENT;
-	}
+	ret = tls_credential_add(CLIENT_CERT_TAG, TLS_CREDENTIAL_PUBLIC_CERTIFICATE,
+				 client_certificate, sizeof(client_certificate));
+	if (ret < 0) { printk("Client cert add failed: %d\n", ret); return ret; }
+	printk("Client cert reg (tag=%d)\n", CLIENT_CERT_TAG);
 
-	memcpy(&peer, ai->ai_addr, sizeof(peer));
-	zsock_freeaddrinfo(ai);
-
-	if (zsock_inet_ntop(AF_INET, &peer.sin_addr, addr, sizeof(addr)) == NULL) {
-		printk("addr format failed\n");
-		return -EINVAL;
-	}
-
-	printk("connect: %s:%u\n", addr, ntohs(peer.sin_port));
-
-	sock = zsock_socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-	if (sock < 0) {
-		printk("socket failed: errno=%d\n", errno);
-		return -errno;
-	}
+	ret = tls_credential_add(CLIENT_CERT_TAG, TLS_CREDENTIAL_PRIVATE_KEY,
+				 client_private_key, sizeof(client_private_key));
+	if (ret < 0) { printk("Client key add failed: %d\n", ret); return ret; }
+	printk("Client key reg (tag=%d)\n", CLIENT_CERT_TAG);
 
 	{
-		struct timeval tv = {.tv_sec = 10, .tv_usec = 0};
-
-		(void)zsock_setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+		struct sntp_time sntp_ts;
+		struct timespec ts;
+		printk("SNTP ...\n");
+		ret = sntp_simple("203.107.6.88", 5000, &sntp_ts);
+		if (ret < 0) { ret = sntp_simple("ntp.aliyun.com", 8000, &sntp_ts); }
+		if (ret >= 0) {
+			ts.tv_sec = (time_t)sntp_ts.seconds; ts.tv_nsec = 0;
+			clock_settime(CLOCK_REALTIME, &ts);
+		} else {
+			ts.tv_sec = 1769097600; ts.tv_nsec = 0;
+			clock_settime(CLOCK_REALTIME, &ts);
+			printk("SNTP failed (%d), hardcoded time\n", ret);
+		}
 	}
 
+	printk("resolving %s:%s\n", WSS_HOST, WSS_PORT);
+	ret = zsock_getaddrinfo(WSS_HOST, WSS_PORT, &hints, &ai);
+	if (ret != 0 || ai == NULL) { ret = -ENOENT; goto out; }
+	memcpy(&peer, ai->ai_addr, sizeof(peer));
+	zsock_freeaddrinfo(ai); ai = NULL;
+	zsock_inet_ntop(AF_INET, &peer.sin_addr, addr_str, sizeof(addr_str));
+	printk("resolved %s:%u\n", addr_str, ntohs(peer.sin_port));
+
+	sock = zsock_socket(AF_INET, SOCK_STREAM, IPPROTO_TLS_1_2);
+	if (sock < 0) { ret = -errno; goto out; }
+	printk("TLS sock fd=%d\n", sock);
+
+	zsock_setsockopt(sock, SOL_TLS, TLS_SEC_TAG_LIST, sec_tags, sizeof(sec_tags));
+	zsock_setsockopt(sock, SOL_TLS, TLS_HOSTNAME, WSS_HOST, sizeof(WSS_HOST)-1);
+	{ struct timeval tv = {.tv_sec = 15}; zsock_setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)); zsock_setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)); }
+
+	printk("TLS connecting ...\n");
 	ret = zsock_connect(sock, (struct sockaddr *)&peer, sizeof(peer));
-	if (ret < 0) {
-		printk("connect failed: errno=%d\n", errno);
-		ret = -errno;
-		goto out;
-	}
+	if (ret < 0) { printk("TLS connect failed: %d\n", -errno); ret = -errno; goto out; }
+	printk("TLS connected\n");
 
-	printk("tcp connected\n");
+	memset(&ws_req, 0, sizeof(ws_req));
+	ws_req.host = WSS_HOST; ws_req.url = WSS_PATH;
+	ws_req.tmp_buf = wss_temp_buf; ws_req.tmp_buf_len = sizeof(wss_temp_buf);
+	ws_fd = websocket_connect(sock, &ws_req, timeout, NULL);
+	if (ws_fd < 0) { printk("ws upgrade failed: %d\n", ws_fd); ret = ws_fd; goto out; }
+	printk("WSS connected (ws_fd=%d)\n", ws_fd);
 
-	ret = zsock_send(sock, TEST_ECHO_PAYLOAD, sizeof(TEST_ECHO_PAYLOAD) - 1, 0);
-	if (ret < 0) {
-		printk("send failed: errno=%d\n", errno);
-		ret = -errno;
-		goto out;
-	}
+	printk("WSS send: %s\n", WSS_SEND_PAYLOAD);
+	ret = websocket_send_msg(ws_fd, (const uint8_t *)WSS_SEND_PAYLOAD,
+				 sizeof(WSS_SEND_PAYLOAD)-1,
+				 WEBSOCKET_OPCODE_DATA_TEXT, true, true, 5000);
+	if (ret < 0) { printk("send failed: %d\n", ret); goto out; }
+	printk("sent %d bytes\n", ret);
 
-	printk("sent %d bytes: %s\n", ret, TEST_ECHO_PAYLOAD);
-
-	ret = zsock_recv(sock, rx, sizeof(rx) - 1, 0);
-	if (ret < 0) {
-		printk("recv failed: errno=%d\n", errno);
-		ret = -errno;
-		goto out;
-	}
-
-	rx[ret] = '\0';
-	printk("recv %d bytes: %s\n", ret, rx);
-	ret = 0;
+	wss_tls_sock = sock;
+	return ws_fd;
 
 out:
-	(void)zsock_close(sock);
+	if (ws_fd >= 0) { websocket_disconnect(ws_fd); }
+	if (sock >= 0) { zsock_close(sock); }
+	if (ai != NULL) { zsock_freeaddrinfo(ai); }
 	return ret;
+}
+
+static void wss_recv_loop(int ws_fd)
+{
+	int total_read, ret, seq = 0;
+	int64_t last_ping = k_uptime_get();
+	int64_t last_test = 0;
+	char test_msg[64];
+
+	while (1) {
+		uint64_t remaining = UINT64_MAX;
+		uint32_t msg_type = 0;
+		total_read = 0;
+
+		/* Send test message every 5s */
+		if (k_uptime_get() - last_test > 5000) {
+			seq++;
+			snprintk(test_msg, sizeof(test_msg),
+				 "{\"seq\":%d,\"msg\":\"acboard-test\"}", seq);
+			ret = websocket_send_msg(ws_fd, (uint8_t *)test_msg,
+						 strlen(test_msg),
+						 WEBSOCKET_OPCODE_DATA_TEXT,
+						 true, true, 3000);
+			if (ret > 0) { printk("wss tx [%d]: %s\n", seq, test_msg); }
+			else { printk("wss tx fail: %d\n", ret); }
+			last_test = k_uptime_get();
+		}
+
+		/* Send ping every 30s */
+		if (k_uptime_get() - last_ping > 30000) {
+			ret = websocket_send_msg(ws_fd, NULL, 0,
+						 WEBSOCKET_OPCODE_PING,
+						 true, true, 3000);
+			if (ret >= 0) { printk("wss ping\n"); }
+			last_ping = k_uptime_get();
+		}
+
+		while (remaining > 0 && total_read < (int)sizeof(wss_recv_buf)-1) {
+			ret = websocket_recv_msg(ws_fd, wss_recv_buf+total_read,
+						 sizeof(wss_recv_buf)-1-total_read,
+						 &msg_type, &remaining, 2000);
+			if (ret < 0) {
+				if (ret == -EAGAIN) { break; }
+				printk("wss err: %d\n", ret); return;
+			}
+
+			/* Check flags BEFORE ret==0 (close frame may return 0) */
+			if (msg_type & WEBSOCKET_FLAG_CLOSE) {
+				printk("wss close frame\n"); return;
+			}
+			if (msg_type & WEBSOCKET_FLAG_PING) {
+				websocket_send_msg(ws_fd, NULL, 0,
+						   WEBSOCKET_OPCODE_PONG,
+						   true, true, 3000);
+				printk("wss pong\n");
+				continue;
+			}
+			if (msg_type & WEBSOCKET_FLAG_PONG) {
+				printk("wss pong recv\n");
+				continue;
+			}
+			if (ret == 0) { printk("wss closed\n"); return; }
+
+			total_read += ret;
+		}
+
+		if (total_read > 0) {
+			wss_recv_buf[total_read] = '\0';
+			printk("wss recv: %s\n", wss_recv_buf);
+		}
+	}
 }
 
 static int modem_init_sequence(void)
@@ -529,6 +621,7 @@ static int modem_init_sequence(void)
 
 int main(void)
 {
+	int ws_fd = -1;
 	int ret;
 
 	if (!device_is_ready(modem_uart)) {
@@ -597,10 +690,13 @@ int main(void)
 		return 0;
 	}
 
-	ret = tcp_echo_test();
-	if (ret < 0) {
-		printk("tcp echo test failed: %d\n", ret);
+	ws_fd = wss_connect();
+	if (ws_fd >= 0) {
+		printk("WSS loop start (ws_fd=%d)\n", ws_fd);
+		wss_recv_loop(ws_fd);
 	}
+	if (ws_fd >= 0) { websocket_disconnect(ws_fd); }
+	if (wss_tls_sock >= 0) { zsock_close(wss_tls_sock); }
 
 	while (1) {
 		k_sleep(K_SECONDS(30));
