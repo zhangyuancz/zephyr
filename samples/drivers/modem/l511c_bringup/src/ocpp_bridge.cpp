@@ -8,31 +8,28 @@ extern "C" {
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/uart.h>
+#include <zephyr/fs/fs.h>
 #include <zephyr/net/websocket.h>
 #include <zephyr/sys/printk.h>
 #include <stdio.h>
+#include <string.h>
 }
 
 #include <functional>
 #include <memory>
+#include <string>
 #include <MicroOcpp.h>
 #include <MicroOcpp/Core/Connection.h>
 #include <MicroOcpp/Core/FilesystemAdapter.h>
+
+/* MicroOcpp files are stored under this mount point */
+#define MO_FS_PREFIX "/lfs1/"
 
 /* ===== MO_CUSTOM_CONSOLE ===== */
 
 char _mo_console_msg_buf[MO_CUSTOM_CONSOLE_MAXMSGSIZE];
 extern "C" void _mo_console_out(const char *msg) {
-	/* Print ERROR, WARN, info, and key OCPP events (Heartbeat, Boot, etc.) */
-	bool show = false;
-	if (strstr(msg, "ERROR") || strstr(msg, "WARN")) { show = true; }
-	if (strstr(msg, "[MO] info")) { show = true; }
-	if (strstr(msg, "request has been")) { show = true; }
-	if (strstr(msg, "initialized")) { show = true; }
-	if (strstr(msg, "send conf")) { show = true; }
-
-	if (!show) { return; }
-
+	/* Show all messages during bringup */
 	static const struct device *uart;
 	if (!uart) { uart = DEVICE_DT_GET(DT_CHOSEN(zephyr_console)); }
 	for (const char *p = msg; *p && *p != '\n'; p++) {
@@ -57,14 +54,141 @@ extern "C" uint32_t mocpp_rng_custom() {
 	return mo_rng_seed;
 }
 
-/* ===== Zephyr WS Connection ===== */
+/* ===== Filesystem adapter (LittleFS on SPI NOR flash) ===== */
 
-static void uart_puts(const char *s) {
-	static const struct device *uart;
-	if (!uart) { uart = DEVICE_DT_GET(DT_CHOSEN(zephyr_console)); }
-	for (const char *p = s; *p; p++) { uart_poll_out(uart, *p); }
-	uart_poll_out(uart, '\r'); uart_poll_out(uart, '\n');
+static std::string mo_full_path(const char *path)
+{
+	return std::string(MO_FS_PREFIX) + path;
 }
+
+class ZephyrFileAdapter : public MicroOcpp::FileAdapter {
+public:
+	ZephyrFileAdapter(const char *path, const char *mode)
+	{
+		fs_file_t_init(&file_);
+
+		fs_mode_t flags = FS_O_CREATE;
+		if (strchr(mode, 'w')) {
+			flags = FS_O_CREATE | FS_O_WRITE | FS_O_TRUNC;
+		} else if (strchr(mode, 'a')) {
+			flags = FS_O_CREATE | FS_O_WRITE | FS_O_APPEND;
+		} else {
+			flags = FS_O_READ;
+		}
+		if (strchr(mode, '+')) {
+			flags |= FS_O_RDWR;
+		}
+
+		int ret = fs_open(&file_, path, flags);
+		if (ret < 0) {
+			printk("ocpp-fs: open(%s) err %d\n", path, ret);
+			valid_ = false;
+		} else {
+			valid_ = true;
+		}
+	}
+
+	~ZephyrFileAdapter() override
+	{
+		if (valid_) {
+			fs_close(&file_);
+		}
+	}
+
+	size_t read(char *buf, size_t len) override
+	{
+		if (!valid_) { return 0; }
+		ssize_t ret = fs_read(&file_, buf, len);
+		return ret > 0 ? (size_t)ret : 0;
+	}
+
+	size_t write(const char *buf, size_t len) override
+	{
+		if (!valid_) { return 0; }
+		ssize_t ret = fs_write(&file_, buf, len);
+		return ret > 0 ? (size_t)ret : 0;
+	}
+
+	size_t seek(size_t offset) override
+	{
+		if (!valid_) { return 0; }
+		int ret = fs_seek(&file_, (off_t)offset, FS_SEEK_SET);
+		if (ret < 0) { return 0; }
+		return (size_t)fs_tell(&file_);
+	}
+
+	int read() override
+	{
+		if (!valid_) { return -1; }
+		unsigned char c;
+		ssize_t ret = fs_read(&file_, &c, 1);
+		return ret == 1 ? (int)c : -1;
+	}
+
+	bool isValid() const { return valid_; }
+
+private:
+	struct fs_file_t file_;
+	bool valid_ = false;
+};
+
+class ZephyrFS : public MicroOcpp::FilesystemAdapter {
+public:
+	int stat(const char *path, size_t *size) override
+	{
+		struct fs_dirent entry;
+		std::string full = mo_full_path(path);
+		int ret = fs_stat(full.c_str(), &entry);
+		if (ret < 0) { return ret; }
+		if (size) { *size = entry.size; }
+		return 0;
+	}
+
+	std::unique_ptr<MicroOcpp::FileAdapter> open(const char *fn, const char *mode) override
+	{
+		std::string full = mo_full_path(fn);
+		auto adapter = std::unique_ptr<ZephyrFileAdapter>(
+			new ZephyrFileAdapter(full.c_str(), mode));
+		if (!adapter->isValid()) {
+			return nullptr;
+		}
+		return adapter;
+	}
+
+	bool remove(const char *fn) override
+	{
+		std::string full = mo_full_path(fn);
+		int ret = fs_unlink(full.c_str());
+		return ret == 0;
+	}
+
+	int ftw_root(std::function<int(const char *fpath)> fn) override
+	{
+		struct fs_dir_t dir;
+		fs_dir_t_init(&dir);
+		int count = 0;
+
+		int ret = fs_opendir(&dir, MO_FS_PREFIX);
+		if (ret < 0) {
+			printk("ocpp-fs: opendir(%s) err %d\n", MO_FS_PREFIX, ret);
+			return ret;  /* non-zero = error, as MO expects */
+		}
+
+		struct fs_dirent entry;
+		while (fs_readdir(&dir, &entry) == 0) {
+			if (entry.name[0] == '\0') { break; }
+			if (entry.type == FS_DIR_ENTRY_DIR) { continue; }
+			count++;
+			fn(entry.name);
+		}
+		fs_closedir(&dir);
+
+		/* MO expects 0 = success */
+		return 0;
+	}
+};
+
+/* ===== Zephyr WS Connection ===== */
 
 class ZephyrWSConnection : public MicroOcpp::Connection {
 public:
@@ -121,25 +245,59 @@ private:
 	MicroOcpp::ReceiveTXTcallback recv_cb_;
 };
 
-/* ===== Filesystem adapter (stub, no persistence) ===== */
+/* ===== Print MO config at boot ===== */
 
-class ZephyrFileAdapter : public MicroOcpp::FileAdapter {
-public:
-	size_t read(char *buf, size_t len) override { return 0; }
-	size_t write(const char *buf, size_t len) override { return 0; }
-	size_t seek(size_t offset) override { return 0; }
-	int read() override { return -1; }
-};
+static void print_mo_config(void)
+{
+	struct fs_dir_t dir;
+	struct fs_dirent entry;
+	char buf[256];
 
-class ZephyrFS : public MicroOcpp::FilesystemAdapter {
-public:
-	int stat(const char *path, size_t *size) override { return 0; }
-	std::unique_ptr<MicroOcpp::FileAdapter> open(const char *fn, const char *mode) override {
-		return nullptr;
+	fs_dir_t_init(&dir);
+
+	int ret = fs_opendir(&dir, MO_FS_PREFIX);
+	if (ret < 0) {
+		printk("--- MO config: opendir err %d ---\n", ret);
+		return;
 	}
-	bool remove(const char *fn) override { return false; }
-	int ftw_root(std::function<int(const char *fpath)> fn) override { return 0; }
-};
+
+	printk("\n--- MO config on flash (mount: %s) ---\n", MO_FS_PREFIX);
+
+	while (fs_readdir(&dir, &entry) == 0) {
+		if (entry.name[0] == '\0') { break; }
+		if (entry.type == FS_DIR_ENTRY_DIR) { continue; }
+
+		printk("  [%s] (%u bytes)\n", entry.name, (unsigned)entry.size);
+
+		/* Read and print file content (up to 240 chars) */
+		struct fs_file_t file;
+		fs_file_t_init(&file);
+		char fpath[260];
+		snprintf(fpath, sizeof(fpath), "%s%s", MO_FS_PREFIX, entry.name);
+		ret = fs_open(&file, fpath, FS_O_READ);
+		if (ret == 0) {
+			ssize_t n = fs_read(&file, buf, sizeof(buf) - 1);
+			if (n > 0) {
+				buf[n] = '\0';
+				printk("    %.*s%s\n",
+				       (n > 240 ? 240 : (int)n), buf,
+				       n > 240 ? "..." : "");
+			}
+			fs_close(&file);
+		}
+	}
+
+	fs_closedir(&dir);
+
+	/* FS usage */
+	struct fs_statvfs st;
+	if (fs_statvfs(MO_FS_PREFIX, &st) == 0) {
+		unsigned long total_kb = (st.f_blocks * st.f_frsize) / 1024;
+		unsigned long free_kb  = (st.f_bfree * st.f_frsize) / 1024;
+		printk("  [FS] %lu / %lu KB used\n", total_kb - free_kb, total_kb);
+	}
+	printk("--- end MO config ---\n\n");
+}
 
 /* ===== Entry point ===== */
 
@@ -165,6 +323,9 @@ extern "C" void ocpp_bridge_start(int ws_fd, const char *server_host,
 		MicroOcpp::ProtocolVersion(2, 0, 1));
 
 	printk("ocpp: running\n");
+
+	/* Dump MO configuration persisted on flash */
+	print_mo_config();
 
 	while (1) {
 		mocpp_loop();

@@ -44,9 +44,28 @@
 		led1 = &led1;
 		modem-uart = &usart0;
 	};
+
+	fstab {
+		compatible = "zephyr,fstab";
+		lfs1: lfs1 {
+			compatible = "zephyr,fstab,littlefs";
+			mount-point = "/lfs1";
+			partition = <&lfs_part>;
+			automount;
+			read-size = <256>;
+			prog-size = <256>;
+			cache-size = <256>;
+			lookahead-size = <128>;
+			block-cycles = <512>;
+		};
+	};
 };
 
 &gpioa {
+	status = "okay";
+};
+
+&gpiob {
 	status = "okay";
 };
 
@@ -76,4 +95,31 @@
 	current-speed = <115200>;
 	pinctrl-0 = <&uart3_default>;
 	pinctrl-names = "default";
+};
+
+&spi2 {
+	status = "okay";
+	cs-gpios = <&gpiob 2 GPIO_ACTIVE_LOW>;
+	pinctrl-0 = <&spi2_default>;
+	pinctrl-names = "default";
+
+	w25q32: w25q32jv@0 {
+		compatible = "jedec,spi-nor";
+		reg = <0>;
+		spi-max-frequency = <20000000>;
+		jedec-id = [c8 40 16];
+		size = <33554432>;  /* 32 Mbit = 4 MB, GD25Q32 */
+	};
+};
+
+&w25q32 {
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+		lfs_part: partition@0 {
+			label = "lfs_storage";
+			reg = <0x00000000 0x00400000>;  /* 4MB full chip */
+		};
+	};
 };

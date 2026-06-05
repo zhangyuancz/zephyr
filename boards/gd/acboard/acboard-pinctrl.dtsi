@@ -17,4 +17,12 @@
 			pinmux = <UART3_TX_PC10>, <UART3_RX_PC11>;
 		};
 	};
+
+	spi2_default: spi2_default {
+		group1 {
+			pinmux = <SPI2_SCK_PB3_OUT_NORMP>,
+				 <SPI2_MISO_PB4_INP_NORMP>,
+				 <SPI2_MOSI_PB5_OUT_NORMP>;
+		};
+	};
 };

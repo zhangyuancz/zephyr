@@ -25,6 +25,8 @@
 #include <zephyr/net/websocket.h>
 #include <zephyr/sys/printk.h>
 
+#include <gd32e50x_gpio.h>
+
 #include "ocpp_bridge.h"
 
 /* ===== Board / Modem DT ===== */
@@ -300,6 +302,12 @@ out:
 int main(void)
 {
 	printk("\n=== L511C OCPP on WS ===\n\n");
+
+	/*
+	 * Release PB3/PB4/PB5 from JTAG (JTDO/JNTRST/JTDI) so they can
+	 * be used for SPI2.  SW-DP on PA13/PA14 is kept for debugging.
+	 */
+	gpio_pin_remap_config(GPIO_SWJ_SWDPENABLE_REMAP, ENABLE);
 
 	if (!device_is_ready(modem_uart)) { return 0; }
 	if (modem_prepare_gpios() < 0) { return 0; }
