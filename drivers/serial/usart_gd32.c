@@ -17,10 +17,6 @@
 
 #include <gd32_usart.h>
 
-/* Unify GD32 HAL USART status register name to USART_STAT */
-#ifndef USART_STAT
-#define USART_STAT USART_STAT0
-#endif
 
 struct gd32_usart_config {
 	uint32_t reg;
@@ -151,28 +147,46 @@ static void usart_gd32_poll_out(const struct device *dev, unsigned char c)
 static int usart_gd32_err_check(const struct device *dev)
 {
 	const struct gd32_usart_config *const cfg = dev->config;
-	uint32_t status = USART_STAT(cfg->reg);
 	int errors = 0;
+	bool need_data_read = false;
 
-	if (status & USART_FLAG_ORERR) {
-		usart_flag_clear(cfg->reg, USART_FLAG_ORERR);
-
+	/*
+	 * Use HAL usart_flag_get() instead of raw register reads.
+	 * The HAL flag enums encode (register_offset << 6) | bit_position,
+	 * NOT raw bitmasks. Direct comparison against USART_STAT() register
+	 * values would compare against the wrong bits (e.g. USART_FLAG_ORERR
+	 * is 3, not BIT(3)=8, causing ORERR to never be detected).
+	 *
+	 * FERR, NERR, and ORERR are cleared by the standard USART sequence:
+	 * read STAT0, then read DATA (matching the GD32F527 reference demo).
+	 * PERR is cleared via usart_flag_clear write to STAT0.
+	 */
+	if (usart_flag_get(cfg->reg, USART_FLAG_ORERR)) {
+		need_data_read = true;
 		errors |= UART_ERROR_OVERRUN;
 	}
 
-	if (status & USART_FLAG_PERR) {
+	if (usart_flag_get(cfg->reg, USART_FLAG_PERR)) {
 		usart_flag_clear(cfg->reg, USART_FLAG_PERR);
 
 		errors |= UART_ERROR_PARITY;
 	}
 
-	if (status & USART_FLAG_FERR) {
-		usart_flag_clear(cfg->reg, USART_FLAG_FERR);
-
+	if (usart_flag_get(cfg->reg, USART_FLAG_FERR)) {
+		need_data_read = true;
 		errors |= UART_ERROR_FRAMING;
 	}
 
-	usart_flag_clear(cfg->reg, USART_FLAG_NERR);
+	if (usart_flag_get(cfg->reg, USART_FLAG_NERR)) {
+		need_data_read = true;
+	}
+
+	/* Clear FERR/NERR/ORERR: read STAT0 (done by usart_flag_get above)
+	 * then read DATA to complete the clear sequence.
+	 */
+	if (need_data_read) {
+		(void)usart_data_receive(cfg->reg);
+	}
 
 	return errors;
 }

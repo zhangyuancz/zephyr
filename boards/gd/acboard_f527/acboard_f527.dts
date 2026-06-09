@@ -29,7 +29,16 @@
 
 	aliases {
 		led0 = &led0;
+		uart0 = &usart0;
 	};
+};
+
+&gpioa {
+	status = "okay";
+};
+
+&gpiob {
+	status = "okay";
 };
 
 &gpioc {
@@ -38,6 +47,14 @@
 
 &gpiod {
 	status = "okay";
+};
+
+/* Loopback test UART on PB6/PB7 */
+&usart0 {
+	status = "okay";
+	current-speed = <115200>;
+	pinctrl-0 = <&usart0_default>;
+	pinctrl-names = "default";
 };
 
 &usart5 {
