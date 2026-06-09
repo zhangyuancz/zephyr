@@ -1,0 +1,12 @@
+identifier: acboard_f527
+name: ACBoard-F527
+type: mcu
+arch: arm
+ram: 512
+flash: 2048
+toolchain:
+  - zephyr
+  - gnuarmemb
+supported:
+  - gpio
+vendor: gd

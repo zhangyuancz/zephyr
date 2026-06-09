@@ -1,0 +1,6 @@
+board:
+  name: acboard_f527
+  full_name: ACBoard-F527
+  vendor: gd
+  socs:
+    - name: gd32f527

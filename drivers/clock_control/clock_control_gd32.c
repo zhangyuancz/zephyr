@@ -103,7 +103,8 @@ static int clock_control_gd32_get_rate(const struct device *dev,
 	cfg = sys_read32(config->base + RCU_CFG0_OFFSET);
 
 	switch (GD32_CLOCK_ID_OFFSET(id)) {
-#if defined(CONFIG_SOC_SERIES_GD32F4XX)
+#if defined(CONFIG_SOC_SERIES_GD32F4XX) || \
+	defined(CONFIG_SOC_SERIES_GD32F5XX)
 	case RCU_AHB1EN_OFFSET:
 	case RCU_AHB2EN_OFFSET:
 	case RCU_AHB3EN_OFFSET:
@@ -137,7 +138,8 @@ static int clock_control_gd32_get_rate(const struct device *dev,
 			continue;
 		}
 
-#if defined(CONFIG_SOC_SERIES_GD32F4XX)
+#if defined(CONFIG_SOC_SERIES_GD32F4XX) || \
+	defined(CONFIG_SOC_SERIES_GD32F5XX)
 		uint32_t cfg1 = sys_read32(config->base + RCU_CFG1_OFFSET);
 
 		/*
