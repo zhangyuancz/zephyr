@@ -10,6 +10,7 @@
 
 /* RCU register offsets for F5xx (different from E50x) */
 #define RCU_CFG0_OFFSET      0x08U
+#define RCU_CFG1_OFFSET      0x8CU
 #define RCU_AHB1EN_OFFSET    0x30U
 #define RCU_AHB2EN_OFFSET    0x34U
 #define RCU_AHB3EN_OFFSET    0x38U
@@ -24,6 +25,8 @@
 #define RCU_CFG0_APB1PSC_MSK (BIT_MASK(3) << RCU_CFG0_APB1PSC_POS)
 #define RCU_CFG0_APB2PSC_POS 13U
 #define RCU_CFG0_APB2PSC_MSK (BIT_MASK(3) << RCU_CFG0_APB2PSC_POS)
+#define RCU_CFG1_TIMERSEL_POS 24U
+#define RCU_CFG1_TIMERSEL_MSK BIT(RCU_CFG1_TIMERSEL_POS)
 
 /* Unique ID and memory density */
 #define GD32_UID_BASE         0x1FFFF7E8U

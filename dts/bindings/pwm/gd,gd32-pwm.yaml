@@ -17,6 +17,23 @@ properties:
   "#pwm-cells":
     const: 3
 
+  gd,auxiliary-source-channel:
+    type: int
+    enum: [0, 1, 2, 3]
+    description: PWM output channel whose pulse width drives the auxiliary channel
+
+  gd,auxiliary-channel:
+    type: int
+    enum: [0, 1, 2, 3]
+    description: Internal compare channel configured alongside the PWM output
+
+  gd,auxiliary-pulse-ratio:
+    type: array
+    description: |
+      Numerator and denominator used to derive the auxiliary compare value from
+      the source pulse width. For example, <1 2> places the compare event at
+      half of the active pulse. The denominator must be non-zero.
+
 pwm-cells:
   - channel
   - period

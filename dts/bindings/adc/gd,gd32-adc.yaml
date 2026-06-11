@@ -35,6 +35,26 @@ properties:
       This property used to select the clock and related prescaler, valid
       values defined at 'dts-bindings/adc/gd32xxx.h' headers.
 
+  gd,clock-prescaler:
+    type: int
+    enum: [2, 4, 6, 8]
+    description: ADC input clock divisor for SoCs using the APB2 ADC clock
+
+  gd,external-trigger-source:
+    type: int
+    description: |
+      SoC-specific regular-group external trigger selector. When present,
+      adc_read() arms the conversion and waits for the selected hardware
+      event instead of issuing a software conversion trigger.
+
+  gd,external-trigger-timeout-us:
+    type: int
+    default: 5000
+    min: 1
+    description: |
+      Maximum time to wait for each external hardware trigger. A missing
+      trigger completes the ADC read with -ETIMEDOUT.
+
   channels:
     type: int
     description: Number of external channels

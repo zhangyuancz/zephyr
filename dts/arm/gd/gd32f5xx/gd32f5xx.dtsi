@@ -205,6 +205,17 @@
 			#size-cells = <0>;
 		};
 
+		adc0: adc@40012000 {
+			compatible = "gd,gd32-adc";
+			reg = <0x40012000 0x100>;
+			interrupts = <18 0>;
+			clocks = <&cctl GD32_CLOCK_ADC0>;
+			resets = <&rctl GD32_RESET_ADC0>;
+			channels = <16>;
+			status = "disabled";
+			#io-channel-cells = <1>;
+		};
+
 		dac: dac@40007400 {
 			compatible = "gd,gd32-dac";
 			reg = <0x40007400 0x400>;

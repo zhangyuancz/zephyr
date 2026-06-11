@@ -25,4 +25,23 @@
 				 <SPI2_MOSI_PB5>;
 		};
 	};
+
+	adc0_cp_default: adc0_cp_default {
+		group1 {
+			pinmux = <ADC012_IN11_PC1>;
+		};
+	};
+
+	cp_pwm_default: cp_pwm_default {
+		group1 {
+			pinmux = <TIMER1_CH1_PA1>,
+				 <TIMER1_CH2_PA2>;
+		};
+	};
+
+	cp_pwm_feedback_default: cp_pwm_feedback_default {
+		group1 {
+			pinmux = <TIMER2_CH0_PA6>;
+		};
+	};
 };

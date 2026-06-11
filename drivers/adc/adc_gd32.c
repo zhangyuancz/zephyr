@@ -70,7 +70,12 @@ LOG_MODULE_REGISTER(adc_gd32, CONFIG_ADC_LOG_LEVEL);
 #define SPT_WIDTH	3U
 #define SAMPT1_SIZE	10U
 
-#if defined(CONFIG_SOC_SERIES_GD32F4XX)
+#ifdef CONFIG_SOC_SERIES_GD32F5XX
+#define ADC_GD32_ROUTINE_TRIGGER_RISING \
+	FIELD_PREP(ADC_CTL1_ETMRC, EXTERNAL_TRIGGER_RISING)
+#endif
+
+#if defined(CONFIG_SOC_SERIES_GD32F4XX) || defined(CONFIG_SOC_SERIES_GD32F5XX)
 #define SMP_TIME(x)	ADC_SAMPLETIME_##x
 
 static const uint16_t acq_time_tbl[8] = {3, 15, 28, 56, 84, 112, 144, 480};
@@ -136,6 +141,10 @@ struct adc_gd32_config {
 	uint16_t clkid;
 	struct reset_dt_spec reset;
 	uint8_t channels;
+	uint8_t clock_prescaler;
+	uint8_t external_trigger_source;
+	uint32_t external_trigger_timeout_us;
+	bool hardware_trigger;
 	const struct pinctrl_dev_config *pcfg;
 	uint8_t irq_num;
 	void (*irq_config_func)(void);
@@ -146,7 +155,19 @@ struct adc_gd32_data {
 	const struct device *dev;
 	uint16_t *buffer;
 	uint16_t *repeat_buffer;
+	struct k_timer trigger_timer;
 };
+
+static void adc_gd32_trigger_timeout(struct k_timer *timer)
+{
+	struct adc_gd32_data *data = CONTAINER_OF(timer, struct adc_gd32_data,
+						  trigger_timer);
+	const struct adc_gd32_config *cfg = data->dev->config;
+
+	ADC_CTL0(cfg->reg) &= ~ADC_CTL0_EOCIE;
+	ADC_STAT(cfg->reg) &= ~ADC_STAT_EOC;
+	adc_context_complete(&data->ctx, -ETIMEDOUT);
+}
 
 static void adc_gd32_isr(const struct device *dev)
 {
@@ -154,6 +175,9 @@ static void adc_gd32_isr(const struct device *dev)
 	const struct adc_gd32_config *cfg = dev->config;
 
 	if (ADC_STAT(cfg->reg) & ADC_STAT_EOC) {
+		if (cfg->hardware_trigger) {
+			k_timer_stop(&data->trigger_timer);
+		}
 		*data->buffer++ = ADC_RDATA(cfg->reg);
 
 		/* Disable EOC interrupt. */
@@ -173,11 +197,17 @@ static void adc_context_start_sampling(struct adc_context *ctx)
 
 	data->repeat_buffer = data->buffer;
 
+	ADC_STAT(cfg->reg) &= ~ADC_STAT_EOC;
 	/* Enable EOC interrupt */
 	ADC_CTL0(cfg->reg) |= ADC_CTL0_EOCIE;
 
-	/* Set ADC software conversion trigger. */
-	ADC_CTL1(cfg->reg) |= ADC_CTL1_SWRCST;
+	if (!cfg->hardware_trigger) {
+		/* Set ADC software conversion trigger. */
+		ADC_CTL1(cfg->reg) |= ADC_CTL1_SWRCST;
+	} else {
+		k_timer_start(&data->trigger_timer,
+			      K_USEC(cfg->external_trigger_timeout_us), K_NO_WAIT);
+	}
 }
 
 static void adc_context_update_buffer_pointer(struct adc_context *ctx,
@@ -202,6 +232,54 @@ static inline void adc_gd32_calibration(const struct adc_gd32_config *cfg)
 	while (ADC_CTL1(cfg->reg) & ADC_CTL1_CLB) {
 	}
 }
+
+#if defined(CONFIG_SOC_SERIES_GD32E50X) || defined(CONFIG_SOC_SERIES_GD32F5XX)
+static int adc_gd32_clock_configure(const struct adc_gd32_config *cfg)
+{
+#ifdef CONFIG_SOC_SERIES_GD32F5XX
+	uint32_t prescaler;
+#endif
+
+	switch (cfg->clock_prescaler) {
+	case 2U:
+#ifdef CONFIG_SOC_SERIES_GD32F5XX
+		prescaler = ADC_ADCCK_PCLK2_DIV2;
+#else
+		rcu_adc_clock_config(RCU_CKADC_CKAPB2_DIV2);
+#endif
+		break;
+	case 4U:
+#ifdef CONFIG_SOC_SERIES_GD32F5XX
+		prescaler = ADC_ADCCK_PCLK2_DIV4;
+#else
+		rcu_adc_clock_config(RCU_CKADC_CKAPB2_DIV4);
+#endif
+		break;
+	case 6U:
+#ifdef CONFIG_SOC_SERIES_GD32F5XX
+		prescaler = ADC_ADCCK_PCLK2_DIV6;
+#else
+		rcu_adc_clock_config(RCU_CKADC_CKAPB2_DIV6);
+#endif
+		break;
+	case 8U:
+#ifdef CONFIG_SOC_SERIES_GD32F5XX
+		prescaler = ADC_ADCCK_PCLK2_DIV8;
+#else
+		rcu_adc_clock_config(RCU_CKADC_CKAPB2_DIV8);
+#endif
+		break;
+	default:
+		return -EINVAL;
+	}
+
+#ifdef CONFIG_SOC_SERIES_GD32F5XX
+	ADC_SYNCCTL = (ADC_SYNCCTL & ~ADC_SYNCCTL_ADCCK) | prescaler;
+#endif
+
+	return 0;
+}
+#endif
 
 static int adc_gd32_configure_sampt(const struct adc_gd32_config *cfg,
 				    uint8_t channel, uint16_t acq_time)
@@ -299,6 +377,7 @@ static int adc_gd32_start_read(const struct device *dev,
 	}
 
 #if defined(CONFIG_SOC_SERIES_GD32F4XX) || \
+	defined(CONFIG_SOC_SERIES_GD32F5XX) || \
 	defined(CONFIG_SOC_SERIES_GD32F3X0) || \
 	defined(CONFIG_SOC_SERIES_GD32L23X)
 	ADC_CTL0(cfg->reg) &= ~ADC_CTL0_DRES;
@@ -371,19 +450,27 @@ static int adc_gd32_init(const struct device *dev)
 	int ret;
 
 	data->dev = dev;
+	k_timer_init(&data->trigger_timer, adc_gd32_trigger_timeout, NULL);
 
 	ret = pinctrl_apply_state(cfg->pcfg, PINCTRL_STATE_DEFAULT);
 	if (ret < 0) {
 		return ret;
 	}
 
+	(void)clock_control_on(GD32_CLOCK_CONTROLLER,
+			       (clock_control_subsys_t)&cfg->clkid);
+
+#if defined(CONFIG_SOC_SERIES_GD32E50X) || defined(CONFIG_SOC_SERIES_GD32F5XX)
+	ret = adc_gd32_clock_configure(cfg);
+	if (ret < 0) {
+		return ret;
+	}
+#endif
+
 #ifdef CONFIG_SOC_SERIES_GD32F3X0
 	/* Select adc clock source and its prescaler. */
 	rcu_adc_clock_config(cfg->rcu_clock_source);
 #endif
-
-	(void)clock_control_on(GD32_CLOCK_CONTROLLER,
-			       (clock_control_subsys_t)&cfg->clkid);
 
 	(void)reset_line_toggle_dt(&cfg->reset);
 
@@ -403,6 +490,18 @@ static int adc_gd32_init(const struct device *dev)
 	ADC_CTL1(cfg->reg) |= ADC_CTL1_ETSRC;
 	ADC_CTL1(cfg->reg) |= ADC_CTL1_ETERC;
 #endif
+
+	if (cfg->hardware_trigger) {
+#ifdef CONFIG_SOC_SERIES_GD32F5XX
+		ADC_CTL1(cfg->reg) &= ~(ADC_CTL1_ETSRC | ADC_CTL1_ETMRC);
+		ADC_CTL1(cfg->reg) |= CTL1_ETSRC(cfg->external_trigger_source) |
+				      ADC_GD32_ROUTINE_TRIGGER_RISING;
+#else
+		ADC_CTL1(cfg->reg) &= ~(ADC_CTL1_ETSRC | ADC_CTL1_ETERC);
+		ADC_CTL1(cfg->reg) |= CTL1_ETSRC(cfg->external_trigger_source) |
+				      ADC_CTL1_ETERC;
+#endif
+	}
 
 	/* Enable ADC */
 	ADC_CTL1(cfg->reg) |= ADC_CTL1_ADCON;
@@ -493,6 +592,12 @@ static void adc_gd32_global_irq_cfg(void)
 		.clkid = DT_INST_CLOCKS_CELL(n, id),						\
 		.reset = RESET_DT_SPEC_INST_GET(n),						\
 		.channels = DT_INST_PROP(n, channels),						\
+		.clock_prescaler = DT_INST_PROP_OR(n, gd_clock_prescaler, 6),			\
+		.external_trigger_source =							\
+			DT_INST_PROP_OR(n, gd_external_trigger_source, 0),			\
+		.external_trigger_timeout_us =							\
+			DT_INST_PROP_OR(n, gd_external_trigger_timeout_us, 5000),		\
+		.hardware_trigger = DT_INST_NODE_HAS_PROP(n, gd_external_trigger_source),	\
 		.pcfg = PINCTRL_DT_INST_DEV_CONFIG_GET(n),					\
 		.irq_num = DT_INST_IRQN(n),							\
 		.irq_config_func = adc_gd32_global_irq_cfg,					\
