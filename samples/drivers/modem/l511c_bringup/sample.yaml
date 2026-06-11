@@ -1,9 +1,0 @@
-sample:
-  description: Minimal bring-up sample for the LYNQ L511C-Y7PM modem
-  name: L511C-Y7PM bring-up
-tests:
-  sample.drivers.modem.l511c_bringup:
-    depends_on:
-      - gpio
-      - serial
-    filter: dt_chosen_enabled("zephyr,modem-uart")

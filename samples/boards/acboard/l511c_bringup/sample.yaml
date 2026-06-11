@@ -1,0 +1,16 @@
+sample:
+  description: ACBoard L511C WSS OCPP bring-up
+  name: ACBoard L511C WSS OCPP bring-up
+common:
+  platform_allow:
+    - acboard_f527
+  tags:
+    - modem
+    - ocpp
+    - websocket
+tests:
+  sample.boards.acboard.l511c_bringup:
+    depends_on:
+      - gpio
+      - serial
+    filter: dt_chosen_enabled("zephyr,modem-uart")

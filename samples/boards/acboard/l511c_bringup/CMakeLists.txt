@@ -13,7 +13,9 @@ target_sources(app PRIVATE src/ocpp_bridge.cpp)
 # === C++ STL headers (overrides picolibc's -nostdinc++) ===
 # Zephyr SDK's full C++ STL is available but blocked by -nostdinc++
 # We add the include paths explicitly for C++ files only
-set(SDK_SYSROOT /Users/yuan/zephyr-sdk-1.0.1/gnu/arm-zephyr-eabi/arm-zephyr-eabi)
+get_filename_component(GNU_BINDIR ${CMAKE_CXX_COMPILER} DIRECTORY)
+get_filename_component(GNU_PREFIX ${GNU_BINDIR} DIRECTORY)
+set(SDK_SYSROOT ${GNU_PREFIX}/arm-zephyr-eabi)
 set(CXX_HEADER_ROOT ${SDK_SYSROOT}/include/c++/14.3.0)
 # Target-specific C++ headers (c++config.h etc.)
 execute_process(COMMAND ${CMAKE_CXX_COMPILER} -mcpu=cortex-m33 -mthumb -mfp16-format=ieee -print-multi-directory
