@@ -12,6 +12,12 @@
 		};
 	};
 
+	usart2_default: usart2_default {
+		group1 {
+			pinmux = <USART2_TX_PD8>, <USART2_RX_PD9>;
+		};
+	};
+
 	uart3_default: uart3_default {
 		group1 {
 			pinmux = <UART3_TX_PC10>, <UART3_RX_PC11>;

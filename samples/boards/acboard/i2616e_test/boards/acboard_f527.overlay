@@ -1,0 +1,15 @@
+#include <zephyr/dt-bindings/gpio/gpio.h>
+
+/ {
+	zephyr,user {
+		bluetooth-uart = <&usart2>;
+		bluetooth-reset-gpios = <&gpiod 12 GPIO_ACTIVE_LOW>;
+	};
+};
+
+&usart2 {
+	status = "okay";
+	current-speed = <115200>;
+	pinctrl-0 = <&usart2_default>;
+	pinctrl-names = "default";
+};
