@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * L511C OCPP on WSS (WebSocket Secure / TLS with mTLS)
- * ACBoard + GD32E513
+ * ACBoard
  */
 
 #include <ctype.h>
@@ -30,7 +30,9 @@
 #include <mbedtls/x509.h>
 #include <mbedtls/x509_crt.h>
 
+#if defined(CONFIG_SOC_SERIES_GD32E50X)
 #include <gd32e50x_gpio.h>
+#endif
 
 #include "tls_certificates.h"
 #include "ocpp_bridge.h"
@@ -399,11 +401,10 @@ int main(void)
 {
 	printk("\n=== L511C OCPP on WSS ===\n\n");
 
-	/*
-	 * Release PB3/PB4/PB5 from JTAG (JTDO/JNTRST/JTDI) so they can
-	 * be used for SPI2.  SW-DP on PA13/PA14 is kept for debugging.
-	 */
+	/* GD32E50X requires an AFIO remap to release PB3/PB4/PB5 from JTAG. */
+#if defined(CONFIG_SOC_SERIES_GD32E50X)
 	gpio_pin_remap_config(GPIO_SWJ_SWDPENABLE_REMAP, ENABLE);
+#endif
 
 	if (!device_is_ready(modem_uart)) { return 0; }
 	if (modem_prepare_gpios() < 0) { return 0; }

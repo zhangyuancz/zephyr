@@ -57,10 +57,8 @@
 			#size-cells = <1>;
 
 			flash0: flash@8000000 {
-				compatible = "gd,gd32-nv-flash-v1", "soc-nv-flash";
+				compatible = "soc-nv-flash";
 				write-block-size = <2>;
-				max-erase-time-ms = <2400>;
-				page-size = <DT_SIZE_K(8)>;
 			};
 		};
 

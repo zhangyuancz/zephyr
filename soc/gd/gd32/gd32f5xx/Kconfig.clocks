@@ -1,0 +1,7 @@
+# Copyright (c) 2026
+# SPDX-License-Identifier: Apache-2.0
+
+config GD32_F5XX_CLOCK_200M_8M_HXTAL
+	bool
+	help
+	  Configure the system clock to 200 MHz using an 8 MHz HXTAL.

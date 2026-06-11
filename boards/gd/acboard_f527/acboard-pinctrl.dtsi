@@ -3,18 +3,26 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <dt-bindings/pinctrl/gd32f527i(g-i-k)xx-pinctrl.h>
+#include <dt-bindings/pinctrl/gd32f527v(e-g-i-k)xx-pinctrl.h>
 
 &pinctrl {
 	usart0_default: usart0_default {
 		group1 {
-			pinmux = <USART0_TX_PB6>, <USART0_RX_PB7>;
+			pinmux = <USART0_TX_PA9>, <USART0_RX_PA10>;
 		};
 	};
 
-	usart5_default: usart5_default {
+	uart3_default: uart3_default {
 		group1 {
-			pinmux = <USART5_TX_PC6>, <USART5_RX_PC7>;
+			pinmux = <UART3_TX_PC10>, <UART3_RX_PC11>;
+		};
+	};
+
+	spi2_default: spi2_default {
+		group1 {
+			pinmux = <SPI2_SCK_PB3>,
+				 <SPI2_MISO_PB4>,
+				 <SPI2_MOSI_PB5>;
 		};
 	};
 };
