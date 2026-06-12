@@ -1,0 +1,12 @@
+#include <zephyr/dt-bindings/gpio/gpio.h>
+
+/ {
+	zephyr,user {
+		mc001-trip-gpios = <&gpiob 8 GPIO_ACTIVE_LOW>;
+		mc001-zero-cal-gpios = <&gpioe 0 GPIO_ACTIVE_HIGH>;
+	};
+};
+
+&gpioe {
+	status = "okay";
+};

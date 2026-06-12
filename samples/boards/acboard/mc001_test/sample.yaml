@@ -1,0 +1,11 @@
+sample:
+  name: ACBoard MC001 residual-current detector test
+common:
+  platform_allow:
+    - acboard_f527
+  tags:
+    - gpio
+    - sensor
+tests:
+  sample.boards.acboard.mc001_test:
+    build_only: true
