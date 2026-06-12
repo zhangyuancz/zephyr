@@ -1,0 +1,7 @@
+#include <zephyr/dt-bindings/gpio/gpio.h>
+
+/ {
+	zephyr,user {
+		emergency-stop-gpios = <&gpioa 4 GPIO_ACTIVE_LOW>;
+	};
+};
