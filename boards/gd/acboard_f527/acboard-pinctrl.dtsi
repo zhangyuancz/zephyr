@@ -51,6 +51,15 @@
 		};
 	};
 
+	adc0_inputs_default: adc0_inputs_default {
+		group1 {
+			pinmux = <ADC012_IN0_PA0>,
+				 <ADC012_IN3_PA3>,
+				 <ADC012_IN10_PC0>,
+				 <ADC012_IN13_PC3>;
+		};
+	};
+
 	cp_pwm_default: cp_pwm_default {
 		group1 {
 			pinmux = <TIMER1_CH1_PA1>,

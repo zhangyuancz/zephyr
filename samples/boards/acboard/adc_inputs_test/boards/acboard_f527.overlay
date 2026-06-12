@@ -1,0 +1,49 @@
+#include <zephyr/dt-bindings/adc/adc.h>
+
+/ {
+	zephyr,user {
+		io-channels = <&adc0 0>, <&adc0 3>, <&adc0 10>, <&adc0 13>;
+		io-channel-names = "pa0", "pa3", "pc0", "pc3";
+	};
+};
+
+&adc0 {
+	status = "okay";
+	pinctrl-0 = <&adc0_inputs_default>;
+	pinctrl-names = "default";
+	gd,clock-prescaler = <4>;
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel@0 {
+		reg = <0>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,resolution = <12>;
+	};
+
+	channel@3 {
+		reg = <3>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,resolution = <12>;
+	};
+
+	channel@a {
+		reg = <10>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,resolution = <12>;
+	};
+
+	channel@d {
+		reg = <13>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,resolution = <12>;
+	};
+};
