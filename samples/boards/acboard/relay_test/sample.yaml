@@ -1,0 +1,10 @@
+sample:
+  name: ACBoard relay control test
+common:
+  platform_allow:
+    - acboard_f527
+  tags:
+    - gpio
+tests:
+  sample.boards.acboard.relay_test:
+    build_only: true

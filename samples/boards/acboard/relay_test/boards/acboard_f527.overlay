@@ -1,0 +1,14 @@
+#include <zephyr/dt-bindings/gpio/gpio.h>
+
+/ {
+	zephyr,user {
+		relay-enable-gpios = <&gpioe 1 GPIO_ACTIVE_HIGH>;
+		relay-control1-gpios = <&gpioe 2 GPIO_ACTIVE_HIGH>;
+		relay-control2-gpios = <&gpioe 3 GPIO_ACTIVE_HIGH>;
+		relay-weld-gpios = <&gpioe 4 GPIO_ACTIVE_LOW>;
+	};
+};
+
+&gpioe {
+	status = "okay";
+};
