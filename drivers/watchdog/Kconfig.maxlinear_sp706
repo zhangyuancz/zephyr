@@ -1,0 +1,12 @@
+# Copyright (c) 2026
+# SPDX-License-Identifier: Apache-2.0
+
+config WDT_MAXLINEAR_SP706
+	bool "MaxLinear SP706 external watchdog driver"
+	default y
+	depends on DT_HAS_MAXLINEAR_SP706_ENABLED
+	depends on GPIO
+	select HAS_WDT_NO_CALLBACKS
+	help
+	  Enable the GPIO-fed watchdog in the MaxLinear SP706 supervisor.
+	  Any rising or falling edge on WDI restarts its watchdog timer.

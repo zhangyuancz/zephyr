@@ -1,0 +1,12 @@
+/ {
+	watchdog0: sp706-watchdog {
+		compatible = "maxlinear,sp706";
+		wdi-gpios = <&gpiod 11 GPIO_ACTIVE_HIGH>;
+		timeout-period = <1600>;
+		status = "okay";
+	};
+
+	aliases {
+		watchdog0 = &watchdog0;
+	};
+};

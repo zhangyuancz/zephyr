@@ -1,0 +1,11 @@
+sample:
+  name: ACBoard SP706 external watchdog test
+common:
+  platform_allow:
+    - acboard_f527
+  tags:
+    - gpio
+    - watchdog
+tests:
+  sample.boards.acboard.sp706_test:
+    build_only: true

@@ -1,0 +1,21 @@
+# Copyright (c) 2026
+# SPDX-License-Identifier: Apache-2.0
+
+description: MaxLinear SP706 external watchdog
+
+compatible: "maxlinear,sp706"
+
+include: base.yaml
+
+properties:
+  wdi-gpios:
+    type: phandle-array
+    required: true
+    description: |
+      Watchdog input. Any rising or falling edge clears the watchdog timer.
+      Leaving WDI high or low causes WDO to assert after the timeout.
+
+  timeout-period:
+    type: int
+    default: 1600
+    description: Nominal watchdog timeout in milliseconds.
