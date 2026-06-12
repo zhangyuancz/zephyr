@@ -1,0 +1,11 @@
+sample:
+  name: ACBoard onboard LED test
+common:
+  platform_allow:
+    - acboard_f527
+  tags:
+    - gpio
+    - led
+tests:
+  sample.boards.acboard.led_test:
+    build_only: true

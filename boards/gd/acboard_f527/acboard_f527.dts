@@ -23,12 +23,18 @@
 	leds {
 		compatible = "gpio-leds";
 		led0: led_0 {
-			gpios = <&gpiod 8 GPIO_ACTIVE_LOW>;
+			gpios = <&gpioe 8 GPIO_ACTIVE_LOW>;
+			label = "Board LED 0";
+		};
+		led1: led_1 {
+			gpios = <&gpioe 9 GPIO_ACTIVE_LOW>;
+			label = "Board LED 1";
 		};
 	};
 
 	aliases {
 		led0 = &led0;
+		led1 = &led1;
 	};
 };
 
@@ -45,6 +51,10 @@
 };
 
 &gpiod {
+	status = "okay";
+};
+
+&gpioe {
 	status = "okay";
 };
 
