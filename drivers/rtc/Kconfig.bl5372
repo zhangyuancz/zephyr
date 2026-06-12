@@ -1,0 +1,10 @@
+# Copyright (c) 2026
+# SPDX-License-Identifier: Apache-2.0
+
+config RTC_BL5372
+	bool "Belling BL5372 Real-Time Clock driver"
+	default y
+	depends on DT_HAS_BELLING_BL5372_ENABLED
+	select I2C
+	help
+	  Enable the Belling BL5372 I2C RTC driver.

@@ -24,6 +24,13 @@ LOG_MODULE_REGISTER(i2c_gd32, CONFIG_I2C_LOG_LEVEL);
 
 #include "i2c-priv.h"
 
+/* GD32F5xx keeps these limits private to its HAL source file. */
+#if defined(CONFIG_SOC_SERIES_GD32F5XX)
+#define I2CCLK_MAX 50U
+#define I2CCLK_MIN 2U
+#define I2CCLK_FM_MIN 8U
+#endif
+
 /* Bus error */
 #define I2C_GD32_ERR_BERR BIT(0)
 /* Arbitration lost */

@@ -1,0 +1,12 @@
+&i2c2 {
+	status = "okay";
+	clock-frequency = <I2C_BITRATE_STANDARD>;
+	pinctrl-0 = <&i2c2_default>;
+	pinctrl-names = "default";
+
+	bl5372: rtc@32 {
+		compatible = "belling,bl5372";
+		reg = <0x32>;
+		status = "okay";
+	};
+};

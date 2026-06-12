@@ -37,6 +37,12 @@
 		};
 	};
 
+	i2c2_default: i2c2_default {
+		group1 {
+			pinmux = <I2C2_SCL_PA8>, <I2C2_SDA_PC9>;
+		};
+	};
+
 	spi2_default: spi2_default {
 		group1 {
 			pinmux = <SPI2_SCK_PB3>,

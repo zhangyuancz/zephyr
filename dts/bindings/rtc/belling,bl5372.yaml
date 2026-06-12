@@ -1,0 +1,10 @@
+# Copyright (c) 2026
+# SPDX-License-Identifier: Apache-2.0
+
+description: Belling BL5372 real-time clock
+
+compatible: "belling,bl5372"
+
+include:
+  - name: rtc-device.yaml
+  - name: i2c-device.yaml
