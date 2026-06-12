@@ -1,0 +1,15 @@
+#include <zephyr/dt-bindings/gpio/gpio.h>
+
+/ {
+	zephyr,user {
+		ws1850t-uart = <&usart1>;
+		ws1850t-reset-gpios = <&gpiod 4 GPIO_ACTIVE_HIGH>;
+	};
+};
+
+&usart1 {
+	status = "okay";
+	current-speed = <9600>;
+	pinctrl-0 = <&usart1_default>;
+	pinctrl-names = "default";
+};

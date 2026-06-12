@@ -12,6 +12,12 @@
 		};
 	};
 
+	usart1_default: usart1_default {
+		group1 {
+			pinmux = <USART1_TX_PD5>, <USART1_RX_PD6>;
+		};
+	};
+
 	usart2_default: usart2_default {
 		group1 {
 			pinmux = <USART2_TX_PD8>, <USART2_RX_PD9>;

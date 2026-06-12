@@ -1,0 +1,11 @@
+sample:
+  name: ACBoard WS1850T RFID test
+common:
+  platform_allow:
+    - acboard_f527
+  tags:
+    - rfid
+    - uart
+tests:
+  sample.boards.acboard.ws1850t_test:
+    build_only: true
