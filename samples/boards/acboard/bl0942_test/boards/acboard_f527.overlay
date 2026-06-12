@@ -1,0 +1,12 @@
+/ {
+	zephyr,user {
+		bl0942-uart = <&uart4>;
+	};
+};
+
+&uart4 {
+	status = "okay";
+	current-speed = <9600>;
+	pinctrl-0 = <&uart4_default>;
+	pinctrl-names = "default";
+};

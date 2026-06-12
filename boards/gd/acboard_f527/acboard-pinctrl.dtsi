@@ -24,6 +24,13 @@
 		};
 	};
 
+	uart4_default: uart4_default {
+		group1 {
+			/* The generated pinctrl header mislabels PC12 as UART4_RX. */
+			pinmux = <GD32_PINMUX_AF('C', 12, AF8)>, <UART4_RX_PD2>;
+		};
+	};
+
 	spi2_default: spi2_default {
 		group1 {
 			pinmux = <SPI2_SCK_PB3>,
