@@ -58,6 +58,14 @@
 	status = "okay";
 };
 
+&dma0 {
+	status = "okay";
+};
+
+&dma1 {
+	status = "okay";
+};
+
 /* Debug console, matching ACBoard GD32E513: TX PC10, RX PC11. */
 &uart3 {
 	status = "okay";

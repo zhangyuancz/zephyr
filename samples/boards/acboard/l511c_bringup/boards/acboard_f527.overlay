@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <zephyr/dt-bindings/dma/gd32_dma.h>
+
 / {
 	zephyr,user {
 		modem-powerkey-gpios = <&gpioa 12 GPIO_ACTIVE_HIGH>;
@@ -35,6 +37,9 @@
 	current-speed = <115200>;
 	pinctrl-0 = <&usart0_default>;
 	pinctrl-names = "default";
+	dmas = <&dma1 2 4 GD32_DMA_PRIORITY_VERY_HIGH 3>,
+	       <&dma1 7 4 GD32_DMA_PRIORITY_HIGH 3>;
+	dma-names = "rx", "tx";
 };
 
 &spi2 {
@@ -42,6 +47,9 @@
 	cs-gpios = <&gpiob 2 GPIO_ACTIVE_LOW>;
 	pinctrl-0 = <&spi2_default>;
 	pinctrl-names = "default";
+	dmas = <&dma0 2 0 GD32_DMA_PRIORITY_HIGH 3>,
+	       <&dma0 5 0 GD32_DMA_PRIORITY_MEDIUM 3>;
+	dma-names = "rx", "tx";
 
 	w25q32: w25q32jv@0 {
 		compatible = "jedec,spi-nor";

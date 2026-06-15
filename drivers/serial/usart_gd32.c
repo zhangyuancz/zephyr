@@ -8,8 +8,13 @@
 
 #include <errno.h>
 
+#include <zephyr/kernel.h>
 #include <zephyr/drivers/clock_control.h>
 #include <zephyr/drivers/clock_control/gd32.h>
+#ifdef CONFIG_UART_ASYNC_API
+#include <zephyr/drivers/dma.h>
+#include <zephyr/drivers/dma/dma_gd32.h>
+#endif
 #include <zephyr/drivers/pinctrl.h>
 #include <zephyr/drivers/reset.h>
 #include <zephyr/drivers/uart.h>
@@ -17,6 +22,14 @@
 
 #include <gd32_usart.h>
 
+#ifdef CONFIG_UART_ASYNC_API
+struct gd32_usart_dma_config {
+	const struct device *dev;
+	uint32_t channel;
+	uint32_t slot;
+	uint32_t config;
+};
+#endif
 
 struct gd32_usart_config {
 	uint32_t reg;
@@ -27,6 +40,10 @@ struct gd32_usart_config {
 #ifdef CONFIG_UART_INTERRUPT_DRIVEN
 	uart_irq_config_func_t irq_config_func;
 #endif /* CONFIG_UART_INTERRUPT_DRIVEN */
+#ifdef CONFIG_UART_ASYNC_API
+	struct gd32_usart_dma_config dma_rx;
+	struct gd32_usart_dma_config dma_tx;
+#endif
 };
 
 struct gd32_usart_data {
@@ -35,6 +52,28 @@ struct gd32_usart_data {
 	uart_irq_callback_user_data_t user_cb;
 	void *user_data;
 #endif /* CONFIG_UART_INTERRUPT_DRIVEN */
+#ifdef CONFIG_UART_ASYNC_API
+	const struct device *dev;
+	struct k_spinlock async_lock;
+	uart_callback_t async_cb;
+	void *async_user_data;
+	struct {
+		const uint8_t *buf;
+		size_t len;
+		bool active;
+	} tx;
+	struct {
+		uint8_t *buf;
+		size_t len;
+		size_t offset;
+		size_t activity;
+		uint8_t *next_buf;
+		size_t next_len;
+		int32_t timeout_us;
+		bool active;
+		struct k_work_delayable timeout_work;
+	} rx;
+#endif
 #ifdef CONFIG_UART_USE_RUNTIME_CONFIGURE
 	enum uart_config_parity parity;
 	enum uart_config_stop_bits stop_bits;
@@ -54,6 +93,250 @@ static void usart_gd32_isr(const struct device *dev)
 	}
 }
 #endif /* CONFIG_UART_INTERRUPT_DRIVEN */
+
+#ifdef CONFIG_UART_ASYNC_API
+static void usart_gd32_async_rx_timeout(struct k_work *work);
+static void usart_gd32_async_rx_dma_done(const struct device *dma_dev,
+					 void *user_data, uint32_t channel,
+					 int status);
+static void usart_gd32_async_tx_dma_done(const struct device *dma_dev,
+					 void *user_data, uint32_t channel,
+					 int status);
+
+static bool usart_gd32_async_supported(const struct gd32_usart_config *cfg)
+{
+	return cfg->dma_rx.dev != NULL && cfg->dma_tx.dev != NULL;
+}
+
+static void usart_gd32_async_event(const struct device *dev, struct uart_event *event)
+{
+	struct gd32_usart_data *data = dev->data;
+	uart_callback_t callback;
+	void *user_data;
+	k_spinlock_key_t key;
+
+	key = k_spin_lock(&data->async_lock);
+	callback = data->async_cb;
+	user_data = data->async_user_data;
+	k_spin_unlock(&data->async_lock, key);
+
+	if (callback != NULL) {
+		callback(dev, event, user_data);
+	}
+}
+
+static int usart_gd32_dma_configure(const struct device *dev, bool tx,
+				    const uint8_t *buf, size_t len,
+				    dma_callback_t callback)
+{
+	const struct gd32_usart_config *cfg = dev->config;
+	const struct gd32_usart_dma_config *dma = tx ? &cfg->dma_tx : &cfg->dma_rx;
+	struct dma_block_config block = {0};
+	struct dma_config dma_cfg = {0};
+
+	dma_cfg.channel_direction = tx ? MEMORY_TO_PERIPHERAL : PERIPHERAL_TO_MEMORY;
+	dma_cfg.source_data_size = 1U;
+	dma_cfg.dest_data_size = 1U;
+	dma_cfg.source_burst_length = 1U;
+	dma_cfg.dest_burst_length = 1U;
+	dma_cfg.channel_priority = GD32_DMA_CONFIG_PRIORITY(dma->config);
+	dma_cfg.dma_slot = dma->slot;
+	dma_cfg.block_count = 1U;
+	dma_cfg.head_block = &block;
+	dma_cfg.dma_callback = callback;
+	dma_cfg.user_data = (void *)dev;
+
+	block.block_size = len;
+	if (tx) {
+		block.source_address = (uintptr_t)buf;
+		block.source_addr_adj = DMA_ADDR_ADJ_INCREMENT;
+		block.dest_address = (uintptr_t)&USART_DATA(cfg->reg);
+		block.dest_addr_adj = DMA_ADDR_ADJ_NO_CHANGE;
+	} else {
+		block.source_address = (uintptr_t)&USART_DATA(cfg->reg);
+		block.source_addr_adj = DMA_ADDR_ADJ_NO_CHANGE;
+		block.dest_address = (uintptr_t)buf;
+		block.dest_addr_adj = DMA_ADDR_ADJ_INCREMENT;
+	}
+
+	return dma_config(dma->dev, dma->channel, &dma_cfg);
+}
+
+static void usart_gd32_async_rx_schedule(struct gd32_usart_data *data)
+{
+	if (data->rx.timeout_us != SYS_FOREVER_US) {
+		int32_t timeout_us = MAX(data->rx.timeout_us, 1);
+
+		(void)k_work_reschedule(&data->rx.timeout_work, K_USEC(timeout_us));
+	}
+}
+
+static int usart_gd32_async_rx_start(const struct device *dev, uint8_t *buf,
+				     size_t len)
+{
+	const struct gd32_usart_config *cfg = dev->config;
+	int ret;
+
+	ret = usart_gd32_dma_configure(dev, false, buf, len,
+				       usart_gd32_async_rx_dma_done);
+	if (ret < 0) {
+		return ret;
+	}
+
+	ret = dma_start(cfg->dma_rx.dev, cfg->dma_rx.channel);
+	if (ret < 0) {
+		return ret;
+	}
+
+	usart_dma_receive_config(cfg->reg, USART_DENR_ENABLE);
+	return 0;
+}
+
+static void usart_gd32_async_rx_dma_done(const struct device *dma_dev,
+					 void *user_data, uint32_t channel,
+					 int status)
+{
+	const struct device *dev = user_data;
+	const struct gd32_usart_config *cfg = dev->config;
+	struct gd32_usart_data *data = dev->data;
+	struct uart_event event = {0};
+	uint8_t *released;
+	uint8_t *next_buf;
+	size_t current_len;
+	size_t current_offset;
+	size_t next_len;
+	k_spinlock_key_t key;
+
+	ARG_UNUSED(dma_dev);
+	ARG_UNUSED(channel);
+
+	usart_dma_receive_config(cfg->reg, USART_DENR_DISABLE);
+	(void)k_work_cancel_delayable(&data->rx.timeout_work);
+
+	key = k_spin_lock(&data->async_lock);
+	if (!data->rx.active) {
+		k_spin_unlock(&data->async_lock, key);
+		return;
+	}
+	released = data->rx.buf;
+	current_len = data->rx.len;
+	current_offset = data->rx.offset;
+	next_buf = data->rx.next_buf;
+	next_len = data->rx.next_len;
+	data->rx.buf = next_buf;
+	data->rx.len = next_len;
+	data->rx.offset = 0U;
+	data->rx.activity = 0U;
+	data->rx.next_buf = NULL;
+	data->rx.next_len = 0U;
+	data->rx.active = next_buf != NULL && status == 0;
+	k_spin_unlock(&data->async_lock, key);
+
+	if (status == 0 && current_len > current_offset) {
+		event.type = UART_RX_RDY;
+		event.data.rx.buf = released;
+		event.data.rx.offset = current_offset;
+		event.data.rx.len = current_len - current_offset;
+		usart_gd32_async_event(dev, &event);
+	}
+
+	event.type = UART_RX_BUF_RELEASED;
+	event.data.rx_buf.buf = released;
+	usart_gd32_async_event(dev, &event);
+
+	if (data->rx.active) {
+		if (usart_gd32_async_rx_start(dev, next_buf, next_len) < 0) {
+			key = k_spin_lock(&data->async_lock);
+			data->rx.active = false;
+			k_spin_unlock(&data->async_lock, key);
+		} else {
+			event.type = UART_RX_BUF_REQUEST;
+			usart_gd32_async_event(dev, &event);
+			usart_gd32_async_rx_schedule(data);
+			return;
+		}
+	}
+
+	event.type = status == 0 ? UART_RX_DISABLED : UART_RX_STOPPED;
+	if (status != 0) {
+		event.data.rx_stop.reason = UART_ERROR_OVERRUN;
+		event.data.rx_stop.data.buf = released;
+		event.data.rx_stop.data.offset = current_offset;
+		event.data.rx_stop.data.len = current_len - current_offset;
+	}
+	usart_gd32_async_event(dev, &event);
+}
+
+static void usart_gd32_async_tx_dma_done(const struct device *dma_dev,
+					 void *user_data, uint32_t channel,
+					 int status)
+{
+	const struct device *dev = user_data;
+	const struct gd32_usart_config *cfg = dev->config;
+	struct gd32_usart_data *data = dev->data;
+	struct uart_event event = {0};
+	k_spinlock_key_t key;
+
+	ARG_UNUSED(dma_dev);
+	ARG_UNUSED(channel);
+
+	usart_dma_transmit_config(cfg->reg, USART_DENT_DISABLE);
+
+	key = k_spin_lock(&data->async_lock);
+	event.data.tx.buf = data->tx.buf;
+	event.data.tx.len = status == 0 ? data->tx.len : 0U;
+	data->tx.active = false;
+	data->tx.buf = NULL;
+	data->tx.len = 0U;
+	k_spin_unlock(&data->async_lock, key);
+
+	event.type = status == 0 ? UART_TX_DONE : UART_TX_ABORTED;
+	usart_gd32_async_event(dev, &event);
+}
+
+static void usart_gd32_async_rx_timeout(struct k_work *work)
+{
+	struct k_work_delayable *dwork = k_work_delayable_from_work(work);
+	struct gd32_usart_data *data =
+		CONTAINER_OF(dwork, struct gd32_usart_data, rx.timeout_work);
+	const struct device *dev = data->dev;
+	const struct gd32_usart_config *cfg = dev->config;
+	struct dma_status status;
+	struct uart_event event = {0};
+	size_t received;
+	size_t offset;
+	k_spinlock_key_t key;
+
+	key = k_spin_lock(&data->async_lock);
+	if (!data->rx.active) {
+		k_spin_unlock(&data->async_lock, key);
+		return;
+	}
+	if (dma_get_status(cfg->dma_rx.dev, cfg->dma_rx.channel, &status) < 0) {
+		k_spin_unlock(&data->async_lock, key);
+		return;
+	}
+	received = data->rx.len - status.pending_length;
+	if (received != data->rx.activity) {
+		data->rx.activity = received;
+		k_spin_unlock(&data->async_lock, key);
+		usart_gd32_async_rx_schedule(data);
+		return;
+	}
+	offset = data->rx.offset;
+	data->rx.offset = received;
+	k_spin_unlock(&data->async_lock, key);
+
+	if (received > offset) {
+		event.type = UART_RX_RDY;
+		event.data.rx.buf = data->rx.buf;
+		event.data.rx.offset = offset;
+		event.data.rx.len = received - offset;
+		usart_gd32_async_event(dev, &event);
+	}
+	usart_gd32_async_rx_schedule(data);
+}
+#endif /* CONFIG_UART_ASYNC_API */
 
 static int usart_gd32_init(const struct device *dev)
 {
@@ -102,6 +385,11 @@ static int usart_gd32_init(const struct device *dev)
 	usart_receive_config(cfg->reg, USART_RECEIVE_ENABLE);
 	usart_transmit_config(cfg->reg, USART_TRANSMIT_ENABLE);
 	usart_enable(cfg->reg);
+
+#ifdef CONFIG_UART_ASYNC_API
+	data->dev = dev;
+	k_work_init_delayable(&data->rx.timeout_work, usart_gd32_async_rx_timeout);
+#endif
 
 #ifdef CONFIG_UART_INTERRUPT_DRIVEN
 	cfg->irq_config_func(dev);
@@ -427,6 +715,222 @@ void usart_gd32_irq_callback_set(const struct device *dev,
 }
 #endif /* CONFIG_UART_INTERRUPT_DRIVEN */
 
+#ifdef CONFIG_UART_ASYNC_API
+static int usart_gd32_async_callback_set(const struct device *dev,
+					 uart_callback_t callback,
+					 void *user_data)
+{
+	const struct gd32_usart_config *cfg = dev->config;
+	struct gd32_usart_data *data = dev->data;
+	k_spinlock_key_t key;
+
+	if (!usart_gd32_async_supported(cfg)) {
+		return -ENOTSUP;
+	}
+
+	key = k_spin_lock(&data->async_lock);
+	data->async_cb = callback;
+	data->async_user_data = user_data;
+	k_spin_unlock(&data->async_lock, key);
+	return 0;
+}
+
+static int usart_gd32_async_tx(const struct device *dev, const uint8_t *buf,
+			       size_t len, int32_t timeout)
+{
+	const struct gd32_usart_config *cfg = dev->config;
+	struct gd32_usart_data *data = dev->data;
+	k_spinlock_key_t key;
+	int ret;
+
+	ARG_UNUSED(timeout);
+
+	if (!usart_gd32_async_supported(cfg)) {
+		return -ENOTSUP;
+	}
+	if (buf == NULL || len == 0U) {
+		return -EINVAL;
+	}
+
+	key = k_spin_lock(&data->async_lock);
+	if (data->tx.active) {
+		k_spin_unlock(&data->async_lock, key);
+		return -EBUSY;
+	}
+	data->tx.buf = buf;
+	data->tx.len = len;
+	data->tx.active = true;
+	k_spin_unlock(&data->async_lock, key);
+
+	ret = usart_gd32_dma_configure(dev, true, buf, len,
+				       usart_gd32_async_tx_dma_done);
+	if (ret == 0) {
+		ret = dma_start(cfg->dma_tx.dev, cfg->dma_tx.channel);
+	}
+	if (ret < 0) {
+		key = k_spin_lock(&data->async_lock);
+		data->tx.active = false;
+		data->tx.buf = NULL;
+		data->tx.len = 0U;
+		k_spin_unlock(&data->async_lock, key);
+		return ret;
+	}
+
+	usart_dma_transmit_config(cfg->reg, USART_DENT_ENABLE);
+	return 0;
+}
+
+static int usart_gd32_async_tx_abort(const struct device *dev)
+{
+	const struct gd32_usart_config *cfg = dev->config;
+	struct gd32_usart_data *data = dev->data;
+	struct dma_status status;
+	struct uart_event event = {0};
+	k_spinlock_key_t key;
+	size_t sent;
+
+	key = k_spin_lock(&data->async_lock);
+	if (!data->tx.active) {
+		k_spin_unlock(&data->async_lock, key);
+		return -EFAULT;
+	}
+	(void)dma_get_status(cfg->dma_tx.dev, cfg->dma_tx.channel, &status);
+	usart_dma_transmit_config(cfg->reg, USART_DENT_DISABLE);
+	(void)dma_stop(cfg->dma_tx.dev, cfg->dma_tx.channel);
+	sent = data->tx.len - MIN(data->tx.len, status.pending_length);
+	event.data.tx.buf = data->tx.buf;
+	event.data.tx.len = sent;
+	data->tx.active = false;
+	data->tx.buf = NULL;
+	data->tx.len = 0U;
+	k_spin_unlock(&data->async_lock, key);
+
+	event.type = UART_TX_ABORTED;
+	usart_gd32_async_event(dev, &event);
+	return 0;
+}
+
+static int usart_gd32_async_rx_enable(const struct device *dev, uint8_t *buf,
+				      size_t len, int32_t timeout)
+{
+	const struct gd32_usart_config *cfg = dev->config;
+	struct gd32_usart_data *data = dev->data;
+	struct uart_event event = {.type = UART_RX_BUF_REQUEST};
+	k_spinlock_key_t key;
+	int ret;
+
+	if (!usart_gd32_async_supported(cfg)) {
+		return -ENOTSUP;
+	}
+	if (buf == NULL || len == 0U) {
+		return -EINVAL;
+	}
+
+	key = k_spin_lock(&data->async_lock);
+	if (data->rx.active) {
+		k_spin_unlock(&data->async_lock, key);
+		return -EBUSY;
+	}
+	data->rx.buf = buf;
+	data->rx.len = len;
+	data->rx.offset = 0U;
+	data->rx.activity = 0U;
+	data->rx.next_buf = NULL;
+	data->rx.next_len = 0U;
+	data->rx.timeout_us = timeout;
+	data->rx.active = true;
+	k_spin_unlock(&data->async_lock, key);
+
+	ret = usart_gd32_async_rx_start(dev, buf, len);
+	if (ret < 0) {
+		key = k_spin_lock(&data->async_lock);
+		data->rx.active = false;
+		k_spin_unlock(&data->async_lock, key);
+		return ret;
+	}
+
+	usart_gd32_async_event(dev, &event);
+	usart_gd32_async_rx_schedule(data);
+	return 0;
+}
+
+static int usart_gd32_async_rx_buf_rsp(const struct device *dev, uint8_t *buf,
+				       size_t len)
+{
+	struct gd32_usart_data *data = dev->data;
+	k_spinlock_key_t key;
+	int ret = 0;
+
+	if (buf == NULL || len == 0U) {
+		return -EINVAL;
+	}
+
+	key = k_spin_lock(&data->async_lock);
+	if (!data->rx.active) {
+		ret = -EACCES;
+	} else if (data->rx.next_buf != NULL) {
+		ret = -EBUSY;
+	} else {
+		data->rx.next_buf = buf;
+		data->rx.next_len = len;
+	}
+	k_spin_unlock(&data->async_lock, key);
+	return ret;
+}
+
+static int usart_gd32_async_rx_disable(const struct device *dev)
+{
+	const struct gd32_usart_config *cfg = dev->config;
+	struct gd32_usart_data *data = dev->data;
+	struct dma_status status = {0};
+	struct uart_event event = {0};
+	uint8_t *buf;
+	uint8_t *next_buf;
+	size_t received;
+	size_t offset;
+	k_spinlock_key_t key;
+
+	(void)k_work_cancel_delayable(&data->rx.timeout_work);
+
+	key = k_spin_lock(&data->async_lock);
+	if (!data->rx.active) {
+		k_spin_unlock(&data->async_lock, key);
+		return -EFAULT;
+	}
+	(void)dma_get_status(cfg->dma_rx.dev, cfg->dma_rx.channel, &status);
+	usart_dma_receive_config(cfg->reg, USART_DENR_DISABLE);
+	(void)dma_stop(cfg->dma_rx.dev, cfg->dma_rx.channel);
+	buf = data->rx.buf;
+	next_buf = data->rx.next_buf;
+	received = data->rx.len - MIN(data->rx.len, status.pending_length);
+	offset = data->rx.offset;
+	data->rx.active = false;
+	data->rx.buf = NULL;
+	data->rx.len = 0U;
+	data->rx.next_buf = NULL;
+	data->rx.next_len = 0U;
+	k_spin_unlock(&data->async_lock, key);
+
+	if (received > offset) {
+		event.type = UART_RX_RDY;
+		event.data.rx.buf = buf;
+		event.data.rx.offset = offset;
+		event.data.rx.len = received - offset;
+		usart_gd32_async_event(dev, &event);
+	}
+	event.type = UART_RX_BUF_RELEASED;
+	event.data.rx_buf.buf = buf;
+	usart_gd32_async_event(dev, &event);
+	if (next_buf != NULL) {
+		event.data.rx_buf.buf = next_buf;
+		usart_gd32_async_event(dev, &event);
+	}
+	event.type = UART_RX_DISABLED;
+	usart_gd32_async_event(dev, &event);
+	return 0;
+}
+#endif /* CONFIG_UART_ASYNC_API */
+
 static DEVICE_API(uart, usart_gd32_driver_api) = {
 	.poll_in = usart_gd32_poll_in,
 	.poll_out = usart_gd32_poll_out,
@@ -450,6 +954,14 @@ static DEVICE_API(uart, usart_gd32_driver_api) = {
 	.irq_is_pending = usart_gd32_irq_is_pending,
 	.irq_callback_set = usart_gd32_irq_callback_set,
 #endif /* CONFIG_UART_INTERRUPT_DRIVEN */
+#ifdef CONFIG_UART_ASYNC_API
+	.callback_set = usart_gd32_async_callback_set,
+	.tx = usart_gd32_async_tx,
+	.tx_abort = usart_gd32_async_tx_abort,
+	.rx_enable = usart_gd32_async_rx_enable,
+	.rx_buf_rsp = usart_gd32_async_rx_buf_rsp,
+	.rx_disable = usart_gd32_async_rx_disable,
+#endif /* CONFIG_UART_ASYNC_API */
 };
 
 #ifdef CONFIG_UART_INTERRUPT_DRIVEN
@@ -464,11 +976,41 @@ static DEVICE_API(uart, usart_gd32_driver_api) = {
 		irq_enable(DT_INST_IRQN(n));					\
 	}
 #define GD32_USART_IRQ_HANDLER_FUNC_INIT(n)					\
-	.irq_config_func = usart_gd32_config_func_##n
+	.irq_config_func = usart_gd32_config_func_##n,
 #else /* CONFIG_UART_INTERRUPT_DRIVEN */
 #define GD32_USART_IRQ_HANDLER(n)
 #define GD32_USART_IRQ_HANDLER_FUNC_INIT(n)
 #endif /* CONFIG_UART_INTERRUPT_DRIVEN */
+
+#ifdef CONFIG_UART_ASYNC_API
+#define GD32_USART_DMA_DEVICE(n, name)                                        \
+	COND_CODE_1(DT_INST_NODE_HAS_PROP(n, dmas),                           \
+		    (DEVICE_DT_GET(DT_INST_DMAS_CTLR_BY_NAME(n, name))), (NULL))
+#define GD32_USART_DMA_CELL(n, name, cell)                                    \
+	COND_CODE_1(DT_INST_NODE_HAS_PROP(n, dmas),                           \
+		    (DT_INST_DMAS_CELL_BY_NAME(n, name, cell)), (0U))
+#define GD32_USART_DMA_INIT(n)                                                \
+	.dma_rx = {                                                            \
+		.dev = GD32_USART_DMA_DEVICE(n, rx),                            \
+		.channel = GD32_USART_DMA_CELL(n, rx, channel),                 \
+		.slot = GD32_USART_DMA_CELL(n, rx, slot),                       \
+		.config = GD32_USART_DMA_CELL(n, rx, config),                   \
+	},                                                                       \
+	.dma_tx = {                                                            \
+		.dev = GD32_USART_DMA_DEVICE(n, tx),                            \
+		.channel = GD32_USART_DMA_CELL(n, tx, channel),                 \
+		.slot = GD32_USART_DMA_CELL(n, tx, slot),                       \
+		.config = GD32_USART_DMA_CELL(n, tx, config),                   \
+	},
+#else
+#define GD32_USART_DMA_INIT(n)
+#endif /* CONFIG_UART_ASYNC_API */
+
+#ifdef CONFIG_UART_ASYNC_API
+#define GD32_USART_INIT_LEVEL POST_KERNEL
+#else
+#define GD32_USART_INIT_LEVEL PRE_KERNEL_1
+#endif
 
 #define GD32_USART_INIT(n)							\
 	PINCTRL_DT_INST_DEFINE(n);						\
@@ -482,12 +1024,13 @@ static DEVICE_API(uart, usart_gd32_driver_api) = {
 		.reset = RESET_DT_SPEC_INST_GET(n),				\
 		.pcfg = PINCTRL_DT_INST_DEV_CONFIG_GET(n),			\
 		.parity = DT_INST_ENUM_IDX(n, parity),				\
-		 GD32_USART_IRQ_HANDLER_FUNC_INIT(n)				\
+		GD32_USART_IRQ_HANDLER_FUNC_INIT(n)				\
+		GD32_USART_DMA_INIT(n)						\
 	};									\
 	DEVICE_DT_INST_DEFINE(n, usart_gd32_init,				\
 			      NULL,						\
 			      &usart_gd32_data_##n,				\
-			      &usart_gd32_config_##n, PRE_KERNEL_1,		\
+			      &usart_gd32_config_##n, GD32_USART_INIT_LEVEL,	\
 			      CONFIG_SERIAL_INIT_PRIORITY,			\
 			      &usart_gd32_driver_api);
 
