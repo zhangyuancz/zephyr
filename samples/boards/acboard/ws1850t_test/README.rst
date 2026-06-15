@@ -4,14 +4,16 @@
 ACBoard WS1850T RFID test
 #########################
 
-This sample validates interrupt-driven UART communication with the WS1850T
-RFID reader IC on ACBoard-F527. It uses ``USART1`` at 9600 baud, 8 data bits,
-no parity, and one stop bit. ``PD5`` is USART TX and ``PD6`` is USART RX.
-``PD4`` drives the board-level active-high reset signal.
+This sample reads the WiseSun WS1850T 13.56 MHz contactless card reader on
+ACBoard-F527 through the in-tree ``wisesun,ws1850t`` driver. The reader is
+described as a child of ``USART1`` (9600 baud, 8N1; ``PD5`` TX, ``PD6`` RX) with
+a reset GPIO on ``PD4``. The driver owns the UART register interface and the
+reset line, performs the reset and antenna/timer initialisation, and exposes a
+device-specific API (there is no generic RFID subsystem in Zephyr).
 
-The sample reads the chip version register, initializes the ISO/IEC 14443A
-frontend, and polls for a card. When a card is present it prints the ATQA and
-the cascade-level-one UID bytes returned by anticollision.
+The sample reads the version register, then polls
+:c:func:`ws1850t_read_card` and prints the ATQA and cascade-level-one UID of any
+ISO 14443-A card presented to the field.
 
 Build and flash
 ***************

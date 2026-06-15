@@ -1,0 +1,31 @@
+# Copyright (c) 2026
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  WiseSun WS1850T 13.56 MHz contactless card reader (UART mode).
+
+  An MFRC522 register-compatible ISO/IEC 14443 A/B reader. The chip is a child
+  of the UART node it is wired to, for example:
+
+      &usart1 {
+          status = "okay";
+          current-speed = <9600>;
+
+          ws1850t: ws1850t {
+              compatible = "wisesun,ws1850t";
+              reset-gpios = <&gpiod 4 GPIO_ACTIVE_HIGH>;
+          };
+      };
+
+compatible: "wisesun,ws1850t"
+
+include: uart-device.yaml
+
+properties:
+  reset-gpios:
+    type: phandle-array
+    required: true
+    description: |
+      MCU output connected to the module reset (NRSTPD). Driving it active
+      resets the reader. The active level already accounts for any board level
+      signal inversion between the MCU and NRSTPD.

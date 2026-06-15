@@ -1,0 +1,28 @@
+# Copyright (c) 2026
+# SPDX-License-Identifier: Apache-2.0
+
+config WS1850T
+	bool "WS1850T contactless card reader"
+	default y
+	depends on DT_HAS_WISESUN_WS1850T_ENABLED
+	depends on UART_INTERRUPT_DRIVEN
+	depends on GPIO
+	help
+	  Enable the driver for the WiseSun WS1850T 13.56 MHz contactless card
+	  reader (MFRC522 register-compatible, UART interface). Provides
+	  ISO 14443-A card UID read through a device-specific API.
+
+if WS1850T
+
+config WS1850T_INIT_PRIORITY
+	int "WS1850T init priority"
+	default 90
+	help
+	  WS1850T driver initialization priority in POST_KERNEL. Must be after
+	  the UART and GPIO drivers.
+
+module = WS1850T
+module-str = WS1850T
+source "subsys/logging/Kconfig.template.log_config"
+
+endif # WS1850T

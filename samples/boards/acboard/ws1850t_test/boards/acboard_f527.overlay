@@ -1,15 +1,19 @@
-#include <zephyr/dt-bindings/gpio/gpio.h>
+/*
+ * Copyright (c) 2026
+ * SPDX-License-Identifier: Apache-2.0
+ */
 
-/ {
-	zephyr,user {
-		ws1850t-uart = <&usart1>;
-		ws1850t-reset-gpios = <&gpiod 4 GPIO_ACTIVE_HIGH>;
-	};
-};
+#include <zephyr/dt-bindings/gpio/gpio.h>
 
 &usart1 {
 	status = "okay";
 	current-speed = <9600>;
 	pinctrl-0 = <&usart1_default>;
 	pinctrl-names = "default";
+
+	ws1850t: ws1850t {
+		compatible = "wisesun,ws1850t";
+		/* Active level accounts for the board reset NPN buffer (schematic p6). */
+		reset-gpios = <&gpiod 4 GPIO_ACTIVE_HIGH>;
+	};
 };

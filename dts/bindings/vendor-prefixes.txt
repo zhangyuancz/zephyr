@@ -797,6 +797,7 @@ wi2wi	Wi2Wi, Inc.
 winbond	Winbond Electronics corp.
 winsen	Zhengzhou Winsen Electronics Technology Co., Ltd.
 winstar	Winstar Display Corp.
+wisesun	Shenzhen Qianhai WiseSun Intelligence Technology Co., Ltd.
 wits	Shenzhen Merrii Technology Co., Ltd. (WITS)
 witte	Witte Technology
 wiznet	WIZnet Co., Ltd.
