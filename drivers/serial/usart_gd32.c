@@ -37,9 +37,9 @@ struct gd32_usart_config {
 	struct reset_dt_spec reset;
 	const struct pinctrl_dev_config *pcfg;
 	uint32_t parity;
-#ifdef CONFIG_UART_INTERRUPT_DRIVEN
+#if defined(CONFIG_UART_INTERRUPT_DRIVEN) || defined(CONFIG_UART_ASYNC_API)
 	uart_irq_config_func_t irq_config_func;
-#endif /* CONFIG_UART_INTERRUPT_DRIVEN */
+#endif
 #ifdef CONFIG_UART_ASYNC_API
 	struct gd32_usart_dma_config dma_rx;
 	struct gd32_usart_dma_config dma_tx;
@@ -66,12 +66,9 @@ struct gd32_usart_data {
 		uint8_t *buf;
 		size_t len;
 		size_t offset;
-		size_t activity;
 		uint8_t *next_buf;
 		size_t next_len;
-		int32_t timeout_us;
 		bool active;
-		struct k_work_delayable timeout_work;
 	} rx;
 #endif
 #ifdef CONFIG_UART_USE_RUNTIME_CONFIGURE
@@ -83,19 +80,37 @@ struct gd32_usart_data {
 #endif /* CONFIG_UART_USE_RUNTIME_CONFIGURE */
 };
 
-#ifdef CONFIG_UART_INTERRUPT_DRIVEN
+#ifdef CONFIG_UART_ASYNC_API
+static void usart_gd32_async_rx_idle(const struct device *dev);
+#endif /* CONFIG_UART_ASYNC_API */
+
+#if defined(CONFIG_UART_INTERRUPT_DRIVEN) || defined(CONFIG_UART_ASYNC_API)
 static void usart_gd32_isr(const struct device *dev)
 {
+#ifdef CONFIG_UART_INTERRUPT_DRIVEN
 	struct gd32_usart_data *const data = dev->data;
 
 	if (data->user_cb) {
 		data->user_cb(dev, data->user_data);
 	}
-}
 #endif /* CONFIG_UART_INTERRUPT_DRIVEN */
 
 #ifdef CONFIG_UART_ASYNC_API
-static void usart_gd32_async_rx_timeout(struct k_work *work);
+	const struct gd32_usart_config *const cfg = dev->config;
+
+	/* RX line idle: flush whatever the DMA has landed so far. The IDLE
+	 * flag has no write-clear bit; it is cleared by reading STAT0 (done by
+	 * usart_interrupt_flag_get) followed by a read of DATA.
+	 */
+	if (usart_interrupt_flag_get(cfg->reg, USART_INT_FLAG_IDLE) == SET) {
+		(void)usart_data_receive(cfg->reg);
+		usart_gd32_async_rx_idle(dev);
+	}
+#endif /* CONFIG_UART_ASYNC_API */
+}
+#endif /* CONFIG_UART_INTERRUPT_DRIVEN || CONFIG_UART_ASYNC_API */
+
+#ifdef CONFIG_UART_ASYNC_API
 static void usart_gd32_async_rx_dma_done(const struct device *dma_dev,
 					 void *user_data, uint32_t channel,
 					 int status);
@@ -162,15 +177,6 @@ static int usart_gd32_dma_configure(const struct device *dev, bool tx,
 	return dma_config(dma->dev, dma->channel, &dma_cfg);
 }
 
-static void usart_gd32_async_rx_schedule(struct gd32_usart_data *data)
-{
-	if (data->rx.timeout_us != SYS_FOREVER_US) {
-		int32_t timeout_us = MAX(data->rx.timeout_us, 1);
-
-		(void)k_work_reschedule(&data->rx.timeout_work, K_USEC(timeout_us));
-	}
-}
-
 static int usart_gd32_async_rx_start(const struct device *dev, uint8_t *buf,
 				     size_t len)
 {
@@ -189,6 +195,12 @@ static int usart_gd32_async_rx_start(const struct device *dev, uint8_t *buf,
 	}
 
 	usart_dma_receive_config(cfg->reg, USART_DENR_ENABLE);
+	/* Clear any stale IDLE flag (read STAT0 + DATA) before arming the
+	 * IDLE interrupt, so we do not take a spurious idle event at start.
+	 */
+	(void)usart_interrupt_flag_get(cfg->reg, USART_INT_FLAG_IDLE);
+	(void)usart_data_receive(cfg->reg);
+	usart_interrupt_enable(cfg->reg, USART_INT_IDLE);
 	return 0;
 }
 
@@ -211,7 +223,7 @@ static void usart_gd32_async_rx_dma_done(const struct device *dma_dev,
 	ARG_UNUSED(channel);
 
 	usart_dma_receive_config(cfg->reg, USART_DENR_DISABLE);
-	(void)k_work_cancel_delayable(&data->rx.timeout_work);
+	usart_interrupt_disable(cfg->reg, USART_INT_IDLE);
 
 	key = k_spin_lock(&data->async_lock);
 	if (!data->rx.active) {
@@ -226,7 +238,6 @@ static void usart_gd32_async_rx_dma_done(const struct device *dma_dev,
 	data->rx.buf = next_buf;
 	data->rx.len = next_len;
 	data->rx.offset = 0U;
-	data->rx.activity = 0U;
 	data->rx.next_buf = NULL;
 	data->rx.next_len = 0U;
 	data->rx.active = next_buf != NULL && status == 0;
@@ -252,7 +263,6 @@ static void usart_gd32_async_rx_dma_done(const struct device *dma_dev,
 		} else {
 			event.type = UART_RX_BUF_REQUEST;
 			usart_gd32_async_event(dev, &event);
-			usart_gd32_async_rx_schedule(data);
 			return;
 		}
 	}
@@ -294,13 +304,13 @@ static void usart_gd32_async_tx_dma_done(const struct device *dma_dev,
 	usart_gd32_async_event(dev, &event);
 }
 
-static void usart_gd32_async_rx_timeout(struct k_work *work)
+/* Called from the USART IDLE interrupt: the RX line has gone quiet, so deliver
+ * whatever the RX DMA has landed since the last delivery. Runs in ISR context.
+ */
+static void usart_gd32_async_rx_idle(const struct device *dev)
 {
-	struct k_work_delayable *dwork = k_work_delayable_from_work(work);
-	struct gd32_usart_data *data =
-		CONTAINER_OF(dwork, struct gd32_usart_data, rx.timeout_work);
-	const struct device *dev = data->dev;
 	const struct gd32_usart_config *cfg = dev->config;
+	struct gd32_usart_data *data = dev->data;
 	struct dma_status status;
 	struct uart_event event = {0};
 	size_t received;
@@ -317,12 +327,6 @@ static void usart_gd32_async_rx_timeout(struct k_work *work)
 		return;
 	}
 	received = data->rx.len - status.pending_length;
-	if (received != data->rx.activity) {
-		data->rx.activity = received;
-		k_spin_unlock(&data->async_lock, key);
-		usart_gd32_async_rx_schedule(data);
-		return;
-	}
 	offset = data->rx.offset;
 	data->rx.offset = received;
 	k_spin_unlock(&data->async_lock, key);
@@ -334,7 +338,6 @@ static void usart_gd32_async_rx_timeout(struct k_work *work)
 		event.data.rx.len = received - offset;
 		usart_gd32_async_event(dev, &event);
 	}
-	usart_gd32_async_rx_schedule(data);
 }
 #endif /* CONFIG_UART_ASYNC_API */
 
@@ -388,12 +391,11 @@ static int usart_gd32_init(const struct device *dev)
 
 #ifdef CONFIG_UART_ASYNC_API
 	data->dev = dev;
-	k_work_init_delayable(&data->rx.timeout_work, usart_gd32_async_rx_timeout);
 #endif
 
-#ifdef CONFIG_UART_INTERRUPT_DRIVEN
+#if defined(CONFIG_UART_INTERRUPT_DRIVEN) || defined(CONFIG_UART_ASYNC_API)
 	cfg->irq_config_func(dev);
-#endif /* CONFIG_UART_INTERRUPT_DRIVEN */
+#endif
 #ifdef CONFIG_UART_USE_RUNTIME_CONFIGURE
 	/* Initialize runtime configuration from Devicetree defaults */
 	data->parity = cfg->parity;
@@ -819,6 +821,12 @@ static int usart_gd32_async_rx_enable(const struct device *dev, uint8_t *buf,
 	k_spinlock_key_t key;
 	int ret;
 
+	/* RX-ready delivery is driven by the hardware IDLE-line interrupt (and
+	 * the DMA buffer-full callback as the back-stop for continuous streams),
+	 * so the caller-supplied timeout is not used.
+	 */
+	ARG_UNUSED(timeout);
+
 	if (!usart_gd32_async_supported(cfg)) {
 		return -ENOTSUP;
 	}
@@ -834,10 +842,8 @@ static int usart_gd32_async_rx_enable(const struct device *dev, uint8_t *buf,
 	data->rx.buf = buf;
 	data->rx.len = len;
 	data->rx.offset = 0U;
-	data->rx.activity = 0U;
 	data->rx.next_buf = NULL;
 	data->rx.next_len = 0U;
-	data->rx.timeout_us = timeout;
 	data->rx.active = true;
 	k_spin_unlock(&data->async_lock, key);
 
@@ -850,7 +856,6 @@ static int usart_gd32_async_rx_enable(const struct device *dev, uint8_t *buf,
 	}
 
 	usart_gd32_async_event(dev, &event);
-	usart_gd32_async_rx_schedule(data);
 	return 0;
 }
 
@@ -890,7 +895,7 @@ static int usart_gd32_async_rx_disable(const struct device *dev)
 	size_t offset;
 	k_spinlock_key_t key;
 
-	(void)k_work_cancel_delayable(&data->rx.timeout_work);
+	usart_interrupt_disable(cfg->reg, USART_INT_IDLE);
 
 	key = k_spin_lock(&data->async_lock);
 	if (!data->rx.active) {
@@ -964,7 +969,7 @@ static DEVICE_API(uart, usart_gd32_driver_api) = {
 #endif /* CONFIG_UART_ASYNC_API */
 };
 
-#ifdef CONFIG_UART_INTERRUPT_DRIVEN
+#if defined(CONFIG_UART_INTERRUPT_DRIVEN) || defined(CONFIG_UART_ASYNC_API)
 #define GD32_USART_IRQ_HANDLER(n)						\
 	static void usart_gd32_config_func_##n(const struct device *dev)	\
 	{									\
@@ -977,10 +982,10 @@ static DEVICE_API(uart, usart_gd32_driver_api) = {
 	}
 #define GD32_USART_IRQ_HANDLER_FUNC_INIT(n)					\
 	.irq_config_func = usart_gd32_config_func_##n,
-#else /* CONFIG_UART_INTERRUPT_DRIVEN */
+#else
 #define GD32_USART_IRQ_HANDLER(n)
 #define GD32_USART_IRQ_HANDLER_FUNC_INIT(n)
-#endif /* CONFIG_UART_INTERRUPT_DRIVEN */
+#endif
 
 #ifdef CONFIG_UART_ASYNC_API
 #define GD32_USART_DMA_DEVICE(n, name)                                        \
