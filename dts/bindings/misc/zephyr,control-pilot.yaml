@@ -1,0 +1,68 @@
+# Copyright (c) 2026
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  IEC 61851 control-pilot (CP) interface.
+
+  Ties together the CP PWM generator, a hardware-triggered ADC measuring the CP
+  positive-peak voltage, an optional PWM capture for feedback, and the diode
+  detection input. The CP state (A..E) is derived from the measured CP voltage.
+
+  The timer/ADC hardware configuration (prescalers, ADC trigger source, etc.)
+  lives on the referenced nodes; this node only wires the resulting devices.
+
+  Example:
+
+      cp: control-pilot {
+          compatible = "zephyr,control-pilot";
+          pwms = <&pwm1 2 PWM_USEC(1000) PWM_POLARITY_NORMAL>,
+                 <&pwm2 0 PWM_USEC(1000) PWM_POLARITY_NORMAL>;
+          pwm-names = "cp", "feedback";
+          io-channels = <&adc0 11>;
+          diode-gpios = <&gpioc 2 GPIO_ACTIVE_HIGH>;
+          full-scale-millivolt = <12790>;
+      };
+
+compatible: "zephyr,control-pilot"
+
+properties:
+  pwms:
+    type: phandle-array
+    required: true
+    description: |
+      CP PWM generator (name "cp") and, optionally, a PWM capture channel for
+      feedback (name "feedback").
+
+  pwm-names:
+    type: string-array
+    required: true
+    description: Names for the pwms entries; must include "cp".
+
+  io-channels:
+    type: phandle-array
+    required: true
+    description: ADC channel measuring the (divided) CP voltage.
+
+  io-channel-names:
+    type: string-array
+    description: Optional names for the io-channels entries.
+
+  diode-gpios:
+    type: phandle-array
+    required: true
+    description: Input asserted when the vehicle diode is detected.
+
+  full-scale-millivolt:
+    type: int
+    required: true
+    description: |
+      CP voltage corresponding to ADC full scale, i.e. ADC reference voltage
+      divided by the CP sense-divider ratio. Used to convert the raw ADC peak to
+      a real CP voltage before classifying the IEC 61851 state.
+
+  default-duty-permille:
+    type: int
+    default: 1000
+    description: |
+      PWM duty applied at init, in per mille. Defaults to 1000 (constant +12 V,
+      standby / no current advertised).

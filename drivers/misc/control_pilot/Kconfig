@@ -1,0 +1,29 @@
+# Copyright (c) 2026
+# SPDX-License-Identifier: Apache-2.0
+
+config CONTROL_PILOT
+	bool "IEC 61851 control-pilot driver"
+	default y
+	depends on DT_HAS_ZEPHYR_CONTROL_PILOT_ENABLED
+	depends on PWM
+	depends on ADC
+	depends on GPIO
+	help
+	  Enable the IEC 61851 control-pilot (CP) driver. Generates the CP PWM,
+	  measures the CP voltage to classify the A..E state, reads the diode
+	  detection input, and optionally reads back the PWM via capture.
+
+if CONTROL_PILOT
+
+config CONTROL_PILOT_INIT_PRIORITY
+	int "Control-pilot init priority"
+	default 91
+	help
+	  Control-pilot driver initialization priority in POST_KERNEL. Must be
+	  after the PWM, ADC and GPIO drivers.
+
+module = CONTROL_PILOT
+module-str = control_pilot
+source "subsys/logging/Kconfig.template.log_config"
+
+endif # CONTROL_PILOT

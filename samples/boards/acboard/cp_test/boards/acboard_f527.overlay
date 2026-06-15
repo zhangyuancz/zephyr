@@ -1,14 +1,23 @@
+/*
+ * Copyright (c) 2026
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 #include <zephyr/dt-bindings/adc/adc.h>
 #include <zephyr/dt-bindings/adc/gd32f5xx.h>
 #include <zephyr/dt-bindings/gpio/gpio.h>
 #include <zephyr/dt-bindings/pwm/pwm.h>
 
 / {
-	zephyr,user {
-		io-channels = <&adc0 11>;
+	cp: control-pilot {
+		compatible = "zephyr,control-pilot";
 		pwms = <&pwm1 2 PWM_USEC(1000) PWM_POLARITY_NORMAL>,
 		       <&pwm2 0 PWM_USEC(1000) PWM_POLARITY_NORMAL>;
-		cp-diode-gpios = <&gpioc 2 GPIO_ACTIVE_HIGH>;
+		pwm-names = "cp", "feedback";
+		io-channels = <&adc0 11>;
+		diode-gpios = <&gpioc 2 GPIO_ACTIVE_HIGH>;
+		/* CP voltage at ADC full scale = Vref(3.3V) / divider(0.258). */
+		full-scale-millivolt = <12790>;
 	};
 };
 
