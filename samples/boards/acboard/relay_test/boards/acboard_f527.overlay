@@ -1,11 +1,19 @@
+/*
+ * Copyright (c) 2026
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 #include <zephyr/dt-bindings/gpio/gpio.h>
 
 / {
-	zephyr,user {
-		relay-enable-gpios = <&gpioe 1 GPIO_ACTIVE_HIGH>;
-		relay-control1-gpios = <&gpioe 2 GPIO_ACTIVE_HIGH>;
-		relay-control2-gpios = <&gpioe 3 GPIO_ACTIVE_HIGH>;
-		relay-weld-gpios = <&gpioe 4 GPIO_ACTIVE_LOW>;
+	relay: relay {
+		compatible = "zephyr,gpio-relay";
+		/* Channel 0 = L pole (K1), channel 1 = N pole (K2). */
+		enable-gpios = <&gpioe 1 GPIO_ACTIVE_HIGH>;
+		control-gpios = <&gpioe 2 GPIO_ACTIVE_HIGH>,
+				<&gpioe 3 GPIO_ACTIVE_HIGH>;
+		weld-gpios = <&gpioe 4 GPIO_ACTIVE_LOW>;
+		settle-time-ms = <5>;
 	};
 };
 

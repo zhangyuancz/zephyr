@@ -1,0 +1,50 @@
+# Copyright (c) 2026
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  GPIO-driven relay / contactor with weld (output-feedback) detection.
+
+  The relay is built from a master enable gate and one control line per channel.
+  A coil is energised only when both the enable gate and its channel control are
+  asserted, so the driver applies break-before-make sequencing. A feedback input
+  is active when the relay output is live; comparing it against the commanded
+  state detects a welded contact (output live while commanded open).
+
+  Example (two-pole contactor):
+
+      relay: relay {
+          compatible = "zephyr,gpio-relay";
+          enable-gpios = <&gpioe 1 GPIO_ACTIVE_HIGH>;
+          control-gpios = <&gpioe 2 GPIO_ACTIVE_HIGH>,
+                          <&gpioe 3 GPIO_ACTIVE_HIGH>;
+          weld-gpios = <&gpioe 4 GPIO_ACTIVE_LOW>;
+      };
+
+compatible: "zephyr,gpio-relay"
+
+properties:
+  enable-gpios:
+    type: phandle-array
+    required: true
+    description: |
+      Master enable gate. Asserted (together with a channel control) to energise
+      a closed channel.
+
+  control-gpios:
+    type: phandle-array
+    required: true
+    description: |
+      Per-channel relay coil control lines. Channel i corresponds to bit i of the
+      mask passed to relay_set().
+
+  weld-gpios:
+    type: phandle-array
+    required: true
+    description: |
+      Feedback input, active when the relay output is live. Used to detect a
+      welded contact: output live while the relay is commanded open.
+
+  settle-time-ms:
+    type: int
+    default: 5
+    description: Break-before-make settle time in milliseconds.

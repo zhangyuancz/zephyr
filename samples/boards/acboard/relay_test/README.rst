@@ -4,17 +4,21 @@
 ACBoard relay control test
 ##########################
 
-This sample validates the relay interface on ACBoard-F527. All outputs are
-inactive at startup and only change in response to a console command.
+This sample drives the ACBoard-F527 charging contactor through the in-tree
+``zephyr,gpio-relay`` driver. The contactor has two poles (channel 0 = L / K1,
+channel 1 = N / K2), a master enable gate, and an output-feedback input used for
+weld detection. The driver owns those GPIOs, applies break-before-make
+sequencing, and reports welded contacts (output live while commanded open)
+through a callback.
 
-* ``PE1``: active-high relay driver enable
-* ``PE2``: active-high relay control 1
-* ``PE3``: active-high relay control 2
-* ``PE4``: active-low relay weld-detection input; low indicates a welded relay
+The application registers the weld callback and drives the relay from the
+console: ``0`` (open), ``1`` (L pole only), ``2`` (N pole only), ``3`` (both),
+``s`` (status), ``h`` (help).
 
-Console commands are ``0`` (all off), ``1`` (control 1), ``2`` (control 2),
-``3`` (both controls), and ``s`` (print status). Control outputs are always
-cleared before the driver enable is removed.
+.. note::
+
+   Weld detection senses mains voltage on the relay output, so it only triggers
+   with the high-voltage side connected. Without mains it always reads normal.
 
 Build and flash
 ***************

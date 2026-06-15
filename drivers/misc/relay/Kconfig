@@ -1,0 +1,27 @@
+# Copyright (c) 2026
+# SPDX-License-Identifier: Apache-2.0
+
+config RELAY
+	bool "GPIO relay / contactor driver"
+	default y
+	depends on DT_HAS_ZEPHYR_GPIO_RELAY_ENABLED
+	select GPIO
+	help
+	  Enable the GPIO relay / contactor driver. Drives a multi-channel relay
+	  with break-before-make sequencing and detects welded contacts from an
+	  output-feedback input.
+
+if RELAY
+
+config RELAY_INIT_PRIORITY
+	int "Relay init priority"
+	default 90
+	help
+	  Relay driver initialization priority in POST_KERNEL. Must be after the
+	  GPIO driver.
+
+module = RELAY
+module-str = RELAY
+source "subsys/logging/Kconfig.template.log_config"
+
+endif # RELAY

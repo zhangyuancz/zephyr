@@ -3,106 +3,43 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <stdbool.h>
 #include <stdint.h>
 
 #include <zephyr/device.h>
-#include <zephyr/devicetree.h>
-#include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
 
-#define USER_NODE DT_PATH(zephyr_user)
-#define WELD_DEBOUNCE K_MSEC(10)
-#define DRIVER_SETTLE K_MSEC(5)
+#include <zephyr/drivers/misc/relay/relay.h>
 
-static const struct gpio_dt_spec relay_enable =
-	GPIO_DT_SPEC_GET(USER_NODE, relay_enable_gpios);
-static const struct gpio_dt_spec relay_control1 =
-	GPIO_DT_SPEC_GET(USER_NODE, relay_control1_gpios);
-static const struct gpio_dt_spec relay_control2 =
-	GPIO_DT_SPEC_GET(USER_NODE, relay_control2_gpios);
-static const struct gpio_dt_spec relay_weld =
-	GPIO_DT_SPEC_GET(USER_NODE, relay_weld_gpios);
+static const struct device *const relay = DEVICE_DT_GET_ONE(zephyr_gpio_relay);
 static const struct device *const console = DEVICE_DT_GET(DT_CHOSEN(zephyr_console));
-
-static struct gpio_callback weld_callback;
-static struct k_work_delayable weld_work;
-static bool weld_fault;
-static bool control1_state;
-static bool control2_state;
 
 static void print_status(void)
 {
-	printk("Relay: enable=%u control1=%u control2=%u weld_fault=%u\n",
-	       control1_state || control2_state, control1_state, control2_state,
-	       weld_fault);
+	uint32_t mask = relay_get(relay);
+
+	printk("Relay: channels=0x%x (L=%u N=%u) weld_fault=%u\n", mask,
+	       (mask >> 0) & 1U, (mask >> 1) & 1U, relay_weld_fault(relay));
 }
 
-static void update_weld_state(struct k_work *work)
+static void weld_handler(const struct device *dev, bool welded, void *user_data)
 {
-	int value;
+	ARG_UNUSED(dev);
+	ARG_UNUSED(user_data);
 
-	ARG_UNUSED(work);
-	value = gpio_pin_get_dt(&relay_weld);
-	if (value < 0) {
-		printk("Relay weld input read failed: %d\n", value);
-		return;
-	}
-
-	if ((value != 0) != weld_fault) {
-		weld_fault = value != 0;
-		printk("Relay weld detection: %s (PE4=%s)\n",
-		       weld_fault ? "FAULT" : "normal",
-		       weld_fault ? "low" : "high");
-	}
-}
-
-static void weld_isr(const struct device *port, struct gpio_callback *callback,
-		     gpio_port_pins_t pins)
-{
-	ARG_UNUSED(port);
-	ARG_UNUSED(callback);
-	ARG_UNUSED(pins);
-	(void)k_work_reschedule(&weld_work, WELD_DEBOUNCE);
-}
-
-static int relay_set(bool control1, bool control2)
-{
-	int ret;
-
-	ret = gpio_pin_set_dt(&relay_enable, 0);
-	ret |= gpio_pin_set_dt(&relay_control1, 0);
-	ret |= gpio_pin_set_dt(&relay_control2, 0);
-	if (ret < 0) {
-		return ret;
-	}
-	k_sleep(DRIVER_SETTLE);
-
-	if (control1 || control2) {
-		ret = gpio_pin_set_dt(&relay_control1, control1);
-		ret |= gpio_pin_set_dt(&relay_control2, control2);
-		ret |= gpio_pin_set_dt(&relay_enable, 1);
-	}
-
-	if (ret == 0) {
-		control1_state = control1;
-		control2_state = control2;
-	}
-	return ret;
+	printk("Relay weld detection: %s\n", welded ? "FAULT (output live while open)" : "normal");
 }
 
 static void print_help(void)
 {
-	printk("Commands: 0=off, 1=control1, 2=control2, 3=both, s=status, h=help\n");
+	printk("Commands: 0=off, 1=L only, 2=N only, 3=both, s=status, h=help\n");
 }
 
 static void handle_console(void)
 {
 	unsigned char command;
-	bool control1;
-	bool control2;
+	uint32_t mask;
 	int ret;
 
 	if (uart_poll_in(console, &command) != 0) {
@@ -111,20 +48,16 @@ static void handle_console(void)
 
 	switch (command) {
 	case '0':
-		control1 = false;
-		control2 = false;
+		mask = 0x0;
 		break;
 	case '1':
-		control1 = true;
-		control2 = false;
+		mask = 0x1;
 		break;
 	case '2':
-		control1 = false;
-		control2 = true;
+		mask = 0x2;
 		break;
 	case '3':
-		control1 = true;
-		control2 = true;
+		mask = 0x3;
 		break;
 	case 's':
 		print_status();
@@ -137,7 +70,7 @@ static void handle_console(void)
 		return;
 	}
 
-	ret = relay_set(control1, control2);
+	ret = relay_set(relay, mask);
 	if (ret < 0) {
 		printk("Relay update failed: %d\n", ret);
 	} else {
@@ -147,43 +80,15 @@ static void handle_console(void)
 
 int main(void)
 {
-	int value;
-	int ret;
-
 	printk("\nACBoard relay control test\n");
-	printk("PE1 enable, PE2/PE3 controls, PE4 active-low weld detection\n");
 
-	if (!gpio_is_ready_dt(&relay_enable) || !gpio_is_ready_dt(&relay_control1) ||
-	    !gpio_is_ready_dt(&relay_control2) || !gpio_is_ready_dt(&relay_weld) ||
-	    !device_is_ready(console)) {
+	if (!device_is_ready(relay) || !device_is_ready(console)) {
 		printk("Relay device resource not ready\n");
 		return 0;
 	}
 
-	ret = gpio_pin_configure_dt(&relay_enable, GPIO_OUTPUT_INACTIVE);
-	ret |= gpio_pin_configure_dt(&relay_control1, GPIO_OUTPUT_INACTIVE);
-	ret |= gpio_pin_configure_dt(&relay_control2, GPIO_OUTPUT_INACTIVE);
-	ret |= gpio_pin_configure_dt(&relay_weld, GPIO_INPUT);
-	if (ret < 0) {
-		printk("Relay GPIO setup failed: %d\n", ret);
-		return 0;
-	}
+	(void)relay_set_weld_handler(relay, weld_handler, NULL);
 
-	k_work_init_delayable(&weld_work, update_weld_state);
-	gpio_init_callback(&weld_callback, weld_isr, BIT(relay_weld.pin));
-	ret = gpio_add_callback(relay_weld.port, &weld_callback);
-	ret |= gpio_pin_interrupt_configure_dt(&relay_weld, GPIO_INT_EDGE_BOTH);
-	if (ret < 0) {
-		printk("Relay weld interrupt setup failed: %d\n", ret);
-		return 0;
-	}
-
-	value = gpio_pin_get_dt(&relay_weld);
-	if (value < 0) {
-		printk("Relay weld initial read failed: %d\n", value);
-		return 0;
-	}
-	weld_fault = value != 0;
 	print_status();
 	print_help();
 
