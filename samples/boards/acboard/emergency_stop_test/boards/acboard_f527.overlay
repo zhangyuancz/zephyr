@@ -1,7 +1,20 @@
+/*
+ * Copyright (c) 2026
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 #include <zephyr/dt-bindings/gpio/gpio.h>
+#include <zephyr/dt-bindings/input/input-event-codes.h>
 
 / {
-	zephyr,user {
-		emergency-stop-gpios = <&gpioa 4 GPIO_ACTIVE_LOW>;
+	emergency_stop_keys: emergency-stop-keys {
+		compatible = "gpio-keys";
+		debounce-interval-ms = <5>;
+
+		estop_key: estop-key {
+			gpios = <&gpioa 4 GPIO_ACTIVE_LOW>;
+			zephyr,code = <INPUT_KEY_POWER>;
+			label = "Emergency stop";
+		};
 	};
 };

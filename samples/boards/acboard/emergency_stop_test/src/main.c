@@ -5,41 +5,37 @@
 
 #include <stdbool.h>
 
+#include <zephyr/device.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/gpio.h>
+#include <zephyr/input/input.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/atomic.h>
 #include <zephyr/sys/printk.h>
 
-#define USER_NODE DT_PATH(zephyr_user)
-#define ESTOP_DEBOUNCE K_MSEC(5)
+#define ESTOP_KEYS_NODE DT_NODELABEL(emergency_stop_keys)
+#define ESTOP_KEY_NODE DT_NODELABEL(estop_key)
+#define ESTOP_CODE DT_PROP(ESTOP_KEY_NODE, zephyr_code)
 
-static const struct gpio_dt_spec emergency_stop =
-	GPIO_DT_SPEC_GET(USER_NODE, emergency_stop_gpios);
-
-static struct gpio_callback emergency_stop_callback;
-static struct k_work_delayable emergency_stop_work;
+static const struct device *const estop_keys = DEVICE_DT_GET(ESTOP_KEYS_NODE);
+static const struct gpio_dt_spec estop_gpio = GPIO_DT_SPEC_GET(ESTOP_KEY_NODE, gpios);
 static atomic_t emergency_stop_latched;
-static bool emergency_stop_active;
 
-static void confirm_emergency_stop(struct k_work *work)
+/*
+ * Edge events arrive debounced from the gpio-keys driver: value 1 means the
+ * active-low input is asserted (emergency stop pressed), value 0 means it has
+ * been released. Releasing deliberately keeps the latch set; production control
+ * logic must run an explicit safety reset before re-enabling power outputs.
+ */
+static void emergency_stop_cb(struct input_event *evt, void *user_data)
 {
-	int value;
+	ARG_UNUSED(user_data);
 
-	ARG_UNUSED(work);
-
-	value = gpio_pin_get_dt(&emergency_stop);
-	if (value < 0) {
-		printk("Emergency-stop input read failed: %d\n", value);
+	if (evt->type != INPUT_EV_KEY || evt->code != ESTOP_CODE) {
 		return;
 	}
 
-	if ((value != 0) == emergency_stop_active) {
-		return;
-	}
-
-	emergency_stop_active = value != 0;
-	if (emergency_stop_active) {
+	if (evt->value != 0) {
 		atomic_set(&emergency_stop_latched, 1);
 		printk("EMERGENCY STOP ACTIVE: PA4 low, event latched\n");
 	} else {
@@ -47,72 +43,38 @@ static void confirm_emergency_stop(struct k_work *work)
 		       atomic_get(&emergency_stop_latched) != 0);
 	}
 }
-
-static void emergency_stop_isr(const struct device *port,
-			       struct gpio_callback *callback,
-			       gpio_port_pins_t pins)
-{
-	ARG_UNUSED(port);
-	ARG_UNUSED(callback);
-	ARG_UNUSED(pins);
-
-	/* Latch immediately when the active-low input is observed in the ISR. */
-	if (gpio_pin_get_dt(&emergency_stop) > 0) {
-		atomic_set(&emergency_stop_latched, 1);
-	}
-	(void)k_work_reschedule(&emergency_stop_work, ESTOP_DEBOUNCE);
-}
+INPUT_CALLBACK_DEFINE(estop_keys, emergency_stop_cb, NULL);
 
 int main(void)
 {
+	bool active;
 	int value;
-	int ret;
 
 	printk("\nACBoard emergency-stop input test\n");
-	printk("PA4: normal high, emergency stop active low\n");
+	printk("PA4: normal high, emergency stop active low (gpio-keys/input)\n");
 
-	if (!gpio_is_ready_dt(&emergency_stop)) {
-		printk("Emergency-stop GPIO device not ready\n");
+	if (!device_is_ready(estop_keys)) {
+		printk("Emergency-stop input device not ready\n");
 		return 0;
 	}
 
-	ret = gpio_pin_configure_dt(&emergency_stop, GPIO_INPUT);
-	if (ret < 0) {
-		printk("Emergency-stop GPIO setup failed: %d\n", ret);
-		return 0;
-	}
-
-	k_work_init_delayable(&emergency_stop_work, confirm_emergency_stop);
-	gpio_init_callback(&emergency_stop_callback, emergency_stop_isr,
-			   BIT(emergency_stop.pin));
-	ret = gpio_add_callback(emergency_stop.port, &emergency_stop_callback);
-	if (ret < 0) {
-		printk("Emergency-stop callback setup failed: %d\n", ret);
-		return 0;
-	}
-
-	ret = gpio_pin_interrupt_configure_dt(&emergency_stop, GPIO_INT_EDGE_BOTH);
-	if (ret < 0) {
-		printk("Emergency-stop interrupt setup failed: %d\n", ret);
-		return 0;
-	}
-
-	value = gpio_pin_get_dt(&emergency_stop);
+	/*
+	 * The input subsystem only reports transitions, so sample the pin once
+	 * at start-up to latch an emergency stop that is already asserted. The
+	 * gpio-keys driver owns and configures the pin, so this is a read-only
+	 * snapshot.
+	 */
+	value = gpio_pin_get_dt(&estop_gpio);
 	if (value < 0) {
 		printk("Emergency-stop initial read failed: %d\n", value);
 		return 0;
 	}
 
-	emergency_stop_active = value != 0;
-	atomic_set(&emergency_stop_latched, emergency_stop_active);
+	active = value != 0;
+	atomic_set(&emergency_stop_latched, active);
 	printk("Initial state: %s (PA4=%s), latched=%d\n",
-	       emergency_stop_active ? "EMERGENCY STOP ACTIVE" : "normal",
-	       emergency_stop_active ? "low" : "high",
-	       atomic_get(&emergency_stop_latched) != 0);
-
-	while (true) {
-		k_sleep(K_FOREVER);
-	}
+	       active ? "EMERGENCY STOP ACTIVE" : "normal",
+	       active ? "low" : "high", atomic_get(&emergency_stop_latched) != 0);
 
 	return 0;
 }

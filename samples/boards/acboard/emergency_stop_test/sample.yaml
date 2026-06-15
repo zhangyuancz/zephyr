@@ -4,6 +4,7 @@ common:
   platform_allow:
     - acboard_f527
   tags:
+    - input
     - gpio
     - safety
 tests:

@@ -4,13 +4,20 @@
 ACBoard emergency-stop input test
 #################################
 
-This sample validates the active-low emergency-stop input on ``PA4``. Both
-edges generate a Zephyr GPIO interrupt. A low level immediately latches the
-emergency-stop event, and delayed work confirms the physical level after 5 ms.
+This sample validates the active-low emergency-stop input on ``PA4`` using the
+Zephyr :ref:`input` subsystem. The pin is described as a ``gpio-keys`` key, so
+the in-tree ``gpio-keys`` driver owns the GPIO, performs the 5 ms debounce, and
+publishes :c:enum:`INPUT_EV_KEY` events. The application only registers an input
+callback with :c:macro:`INPUT_CALLBACK_DEFINE`.
 
-Returning PA4 high reports that the input has recovered, but deliberately does
-not clear the latched emergency-stop event. Production control logic must use
-an explicit safety reset procedure before re-enabling power outputs.
+An asserted input (``value != 0``) immediately latches the emergency-stop event.
+Releasing the input (``PA4`` returns high) reports recovery but deliberately does
+not clear the latch. Production control logic must use an explicit safety reset
+procedure before re-enabling power outputs.
+
+Because the input subsystem only reports transitions, the application also takes
+a one-shot read of the pin at start-up so an emergency stop that is already
+asserted at boot is latched immediately.
 
 Build and flash
 ***************
