@@ -1,0 +1,48 @@
+# Copyright (c) 2026
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  Shanghai Belling BL0942 single-phase energy metering IC (UART mode).
+
+  The BL0942 is a child of the UART node it is wired to, for example:
+
+      &uart4 {
+          status = "okay";
+          current-speed = <9600>;
+
+          bl0942: bl0942 {
+              compatible = "belling,bl0942";
+              voltage-divider-ratio = <1951>;
+              current-shunt-microohm = <1000>;
+          };
+      };
+
+  The driver returns physical units (volts, amperes, watts, hertz) using the
+  fixed conversion constants from the datasheet together with the two
+  board-specific analog front-end values below. It assumes the chip's
+  power-on default register configuration (16x current gain, 1.218 V internal
+  reference).
+
+compatible: "belling,bl0942"
+
+include: [sensor-device.yaml, uart-device.yaml]
+
+properties:
+  voltage-divider-ratio:
+    type: int
+    required: true
+    description: |
+      Ratio between the mains voltage and the voltage presented to the VP pin,
+      i.e. (R_high + R_low) / R_low of the external resistor divider. Used to
+      scale the V_RMS register to the real line voltage.
+
+  current-shunt-microohm:
+    type: int
+    default: 1000
+    description: |
+      Effective current-sense transimpedance in micro-ohms, i.e. the IP/IN
+      differential voltage per ampere of line current. For a direct shunt this
+      is the shunt resistance (default 1 mOhm reference design value). For a
+      current transformer it is burden_resistance / turns_ratio (e.g. a 2000:1
+      CT with a 1.5 ohm burden gives 0.75 mOhm = 750). Used to convert the
+      I_RMS / WATT registers into real line current and power.

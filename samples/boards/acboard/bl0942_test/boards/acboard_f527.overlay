@@ -1,12 +1,24 @@
-/ {
-	zephyr,user {
-		bl0942-uart = <&uart4>;
-	};
-};
+/*
+ * Copyright (c) 2026
+ * SPDX-License-Identifier: Apache-2.0
+ */
 
 &uart4 {
 	status = "okay";
 	current-speed = <9600>;
 	pinctrl-0 = <&uart4_default>;
 	pinctrl-names = "default";
+
+	bl0942: bl0942 {
+		compatible = "belling,bl0942";
+		/*
+		 * ACBoard analog front-end (CAMS_METER schematic):
+		 *  - Current: 2000:1 CT with 1.5 ohm burden, i.e. an effective
+		 *    transimpedance of 1.5/2000 = 0.75 mOhm (32 A -> 24 mV).
+		 *  - Voltage: ZMPT107 VT, 100k primary / 24.9 ohm burden, so
+		 *    220 V gives 54.78 mV at VP -> ratio 220 / 0.05478 ~= 4016.
+		 */
+		voltage-divider-ratio = <4016>;
+		current-shunt-microohm = <750>;
+	};
 };

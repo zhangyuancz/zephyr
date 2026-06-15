@@ -1,0 +1,12 @@
+# Copyright (c) 2026
+# SPDX-License-Identifier: Apache-2.0
+
+config BL0942
+	bool "BL0942 single-phase energy metering IC"
+	default y
+	depends on DT_HAS_BELLING_BL0942_ENABLED
+	depends on UART_INTERRUPT_DRIVEN
+	help
+	  Enable the UART driver for the Shanghai Belling BL0942 single-phase
+	  energy metering IC. Provides voltage, current, active power and line
+	  frequency through the sensor API.
