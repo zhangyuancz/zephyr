@@ -1,0 +1,13 @@
+# Copyright (c) 2026
+# SPDX-License-Identifier: Apache-2.0
+
+config MC001
+	bool "MC001 residual-current detection module"
+	default y
+	depends on DT_HAS_MEGASENWAY_MC001_ENABLED
+	select GPIO
+	help
+	  Enable the driver for the Mega-senway MastCurr MC001 residual-current
+	  (leakage) detection module. Reports the TRIP state through the sensor
+	  API with a SENSOR_TRIG_THRESHOLD trigger and runs the zero-calibration
+	  sequence.

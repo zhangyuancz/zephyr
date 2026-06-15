@@ -1,0 +1,45 @@
+# Copyright (c) 2026
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  Mega-senway MastCurr MC001 residual-current (leakage) detection module.
+
+  An all-in-one digital type-B / A+6mA residual current device for EV charging.
+  The module asserts its TRIP output when the residual current exceeds the
+  action threshold, and accepts a zero-calibration pulse that should be issued
+  once before each charging session.
+
+  The TRIP edge is reported through a SENSOR_TRIG_THRESHOLD trigger, and the
+  latched state is read with the SENSOR_CHAN_MC001_TRIP channel. The driver runs
+  the power-on zero-calibration sequence automatically; it can be re-run with the
+  SENSOR_ATTR_MC001_ZERO_CAL attribute.
+
+  GPIO polarities are expressed at the SoC pin and already account for any board
+  level signal inversion (e.g. an NPN buffer between the module and the MCU).
+
+compatible: "megasenway,mc001"
+
+include: sensor-device.yaml
+
+properties:
+  trip-gpios:
+    type: phandle-array
+    required: true
+    description: |
+      MCU input connected to the module TRIP output. Active level corresponds to
+      a residual-current trip being asserted.
+
+  zero-cal-gpios:
+    type: phandle-array
+    required: true
+    description: |
+      MCU output connected to the module Zero Cal. pin. Driving it active pulls
+      the module calibration pin low to start a zero-current calibration.
+
+  self-test-gpios:
+    type: phandle-array
+    description: |
+      Optional MCU output connected to the module TEST pin. Driving it active
+      injects a simulated residual current so the TRIP path can be verified
+      without a real fault. When absent, SENSOR_ATTR_MC001_SELF_TEST returns
+      -ENOTSUP.

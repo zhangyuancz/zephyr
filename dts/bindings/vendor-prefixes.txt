@@ -440,6 +440,7 @@ meas	Measurement Specialties
 mecer	Mustek Limited
 mediatek	MediaTek Inc.
 megachips	MegaChips
+megasenway	Mega-senway Electronic Technology Ltd.
 mele	Shenzhen MeLE Digital Technology Ltd.
 melexis	Melexis N.V.
 melfas	MELFAS Inc.

@@ -1,9 +1,17 @@
+/*
+ * Copyright (c) 2026
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 #include <zephyr/dt-bindings/gpio/gpio.h>
 
 / {
-	zephyr,user {
-		mc001-trip-gpios = <&gpiob 8 GPIO_ACTIVE_LOW>;
-		mc001-zero-cal-gpios = <&gpioe 0 GPIO_ACTIVE_HIGH>;
+	mc001: mc001 {
+		compatible = "megasenway,mc001";
+		/* Polarities account for the board NPN buffers (schematic p2). */
+		trip-gpios = <&gpiob 8 GPIO_ACTIVE_LOW>;
+		zero-cal-gpios = <&gpioe 0 GPIO_ACTIVE_HIGH>;
+		self-test-gpios = <&gpiob 9 GPIO_ACTIVE_HIGH>;
 	};
 };
 
