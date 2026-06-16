@@ -1,0 +1,19 @@
+#include <zephyr/dt-bindings/gpio/gpio.h>
+
+/*
+ * Carve out one 128KB sector (sector 36) in Bank1 at offset 0x380000 as a
+ * scratch partition for the flash read/erase/write test. It sits well above
+ * the ~40KB application image so the test cannot corrupt running code.
+ */
+&flash0 {
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		storage_partition: partition@380000 {
+			label = "storage";
+			reg = <0x00380000 DT_SIZE_K(128)>;
+		};
+	};
+};

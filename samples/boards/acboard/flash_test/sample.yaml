@@ -1,0 +1,10 @@
+sample:
+  name: ACBoard internal flash test
+common:
+  platform_allow:
+    - acboard_f527
+  tags:
+    - flash
+tests:
+  sample.boards.acboard.flash_test:
+    build_only: true

@@ -7,8 +7,9 @@
 #include <mem.h>
 #include <arm/gd/gd32f5xx/gd32f5xx.dtsi>
 
+/* GD32F527VMT7: 4MB main flash, dual bank (Bank0 2MB + Bank1 2MB). */
 &flash0 {
-	reg = <0x08000000 DT_SIZE_M(2)>;
+	reg = <0x08000000 DT_SIZE_M(4)>;
 };
 
 &sram0 {
