@@ -85,6 +85,11 @@ struct i2616e_data {
 	size_t resp_len;
 
 	struct k_sem ready_sem;
+	/* True while a driver-initiated reset is awaiting IM_READY, so the
+	 * resulting readiness is delivered only through ready_sem and not also
+	 * as a (redundant) I2616E_EVENT_READY. Guarded by the spinlock.
+	 */
+	bool reset_pending;
 
 	struct k_msgq event_q;
 	char event_q_buf[CONFIG_I2616E_EVENT_QUEUE_SIZE * sizeof(struct i2616e_event)];
@@ -237,9 +242,21 @@ static void i2616e_handle_event_line(struct i2616e_data *data, const uint8_t *li
 	memset(event, 0, sizeof(*event));
 
 	if (i2616e_starts_with(line, len, "IM_READY")) {
-		event->type = I2616E_EVENT_READY;
+		k_spinlock_key_t key = k_spin_lock(&data->lock);
+		bool solicited = data->reset_pending;
+
+		data->reset_pending = false;
+		k_spin_unlock(&data->lock, key);
+
 		k_sem_give(&data->ready_sem);
-		i2616e_push_event(data, event);
+
+		/* Only surface an unsolicited restart as an event; a reset the
+		 * driver itself triggered is reported through ready_sem.
+		 */
+		if (!solicited) {
+			event->type = I2616E_EVENT_READY;
+			i2616e_push_event(data, event);
+		}
 		return;
 	}
 
@@ -619,6 +636,7 @@ int i2616e_hardware_reset(const struct device *dev)
 	k_spinlock_key_t key = k_spin_lock(&data->lock);
 
 	data->parse_len = 0U;
+	data->reset_pending = true;
 	k_spin_unlock(&data->lock, key);
 
 	ret = gpio_pin_set_dt(&cfg->reset, 1);
