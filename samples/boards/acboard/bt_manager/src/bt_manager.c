@@ -55,6 +55,8 @@ static struct k_thread bt_mgr_thread_data;
 /* Paired-device table (Settings cfg/bt subtree)                             */
 /* ------------------------------------------------------------------------- */
 
+static size_t bounded_strlen(const char *str, size_t max_len);
+
 static int bt_dev_set(const char *key, size_t len, settings_read_cb read_cb, void *cb_arg)
 {
 	const char *next;
@@ -76,6 +78,9 @@ static int bt_dev_set(const char *key, size_t len, settings_read_cb read_cb, voi
 			return -EIO;
 		}
 		ctx.device_used[idx] = true;
+		LOG_INF("loaded device slot %ld addr=%s pnc=%u name_len=%zu", idx,
+			ctx.devices[idx].address, ctx.devices[idx].pnc,
+			bounded_strlen(ctx.devices[idx].name, BT_MGR_NAME_MAX));
 		return 0;
 	}
 
@@ -98,11 +103,52 @@ static int bt_dev_export(int (*cb)(const char *name, const void *val, size_t val
 
 SETTINGS_STATIC_HANDLER_DEFINE(cfg_bt, "cfg/bt", NULL, bt_dev_set, NULL, bt_dev_export);
 
+static size_t bounded_strlen(const char *str, size_t max_len)
+{
+	size_t len = 0;
+
+	while (len < max_len && str[len] != '\0') {
+		len++;
+	}
+	return len;
+}
+
+static bool valid_address(const char *address)
+{
+	return address != NULL && bounded_strlen(address, BT_MGR_ADDR_TEXT + 1U) == BT_MGR_ADDR_TEXT;
+}
+
+static char lower_hex(char ch)
+{
+	if (ch >= 'A' && ch <= 'F') {
+		return ch + ('a' - 'A');
+	}
+	return ch;
+}
+
+static bool address_equal(const char *a, const char *b)
+{
+	for (size_t i = 0; i < BT_MGR_ADDR_TEXT; i++) {
+		if (lower_hex(a[i]) != lower_hex(b[i])) {
+			return false;
+		}
+	}
+	return true;
+}
+
+static int devstore_save(uint8_t slot)
+{
+	char key[24];
+
+	(void)snprintf(key, sizeof(key), "cfg/bt/dev/%u", slot);
+	return settings_save_one(key, &ctx.devices[slot], sizeof(ctx.devices[slot]));
+}
+
 /* Caller must hold ctx.lock. */
 static int devstore_find(const char *address)
 {
 	for (uint8_t i = 0; i < BT_MGR_MAX_DEVICES; i++) {
-		if (ctx.device_used[i] && strcmp(ctx.devices[i].address, address) == 0) {
+		if (ctx.device_used[i] && address_equal(ctx.devices[i].address, address)) {
 			return i;
 		}
 	}
@@ -119,11 +165,20 @@ static size_t devstore_count(void)
 	return count;
 }
 
+static void devstore_copy(uint8_t slot, struct bt_mgr_device *out)
+{
+	memset(out, 0, sizeof(*out));
+	strncpy(out->address, ctx.devices[slot].address, BT_MGR_ADDR_TEXT);
+	strncpy(out->name, ctx.devices[slot].name, BT_MGR_NAME_MAX);
+	out->name_len = bounded_strlen(ctx.devices[slot].name, BT_MGR_NAME_MAX);
+	out->plug_and_charge = ctx.devices[slot].pnc != 0U;
+}
+
 /* Add a newly authenticated device if there is room. Caller holds ctx.lock. */
 static int devstore_add(const char *address)
 {
-	char key[24];
 	int slot = -1;
+	int ret;
 
 	for (uint8_t i = 0; i < BT_MGR_MAX_DEVICES; i++) {
 		if (!ctx.device_used[i]) {
@@ -141,8 +196,13 @@ static int devstore_add(const char *address)
 	strncpy(ctx.devices[slot].address, address, BT_MGR_ADDR_TEXT);
 	ctx.device_used[slot] = true;
 
-	(void)snprintf(key, sizeof(key), "cfg/bt/dev/%d", slot);
-	(void)settings_save_one(key, &ctx.devices[slot], sizeof(ctx.devices[slot]));
+	ret = devstore_save(slot);
+	if (ret < 0) {
+		LOG_ERR("failed to persist device %s in slot %d: %d", address, slot, ret);
+		memset(&ctx.devices[slot], 0, sizeof(ctx.devices[slot]));
+		ctx.device_used[slot] = false;
+		return ret;
+	}
 	LOG_INF("recorded device %s in slot %d", address, slot);
 	return slot;
 }
@@ -390,6 +450,152 @@ size_t bt_manager_device_count(void)
 	count = devstore_count();
 	k_mutex_unlock(&ctx.lock);
 	return count;
+}
+
+bool bt_manager_has_device(const char *address)
+{
+	bool found;
+
+	if (!valid_address(address)) {
+		return false;
+	}
+
+	k_mutex_lock(&ctx.lock, K_FOREVER);
+	found = devstore_find(address) >= 0;
+	k_mutex_unlock(&ctx.lock);
+	return found;
+}
+
+int bt_manager_get_devices(struct bt_mgr_device *devices, size_t capacity, size_t *count)
+{
+	size_t total = 0;
+	size_t copied = 0;
+
+	if (count == NULL || (devices == NULL && capacity > 0U)) {
+		return -EINVAL;
+	}
+
+	k_mutex_lock(&ctx.lock, K_FOREVER);
+	for (uint8_t i = 0; i < BT_MGR_MAX_DEVICES; i++) {
+		if (!ctx.device_used[i]) {
+			continue;
+		}
+		if (copied < capacity) {
+			devstore_copy(i, &devices[copied]);
+			copied++;
+		}
+		total++;
+	}
+	k_mutex_unlock(&ctx.lock);
+
+	*count = total;
+	return copied == total ? 0 : -ENOMEM;
+}
+
+int bt_manager_update_device(const char *address, const uint8_t *name, size_t name_len)
+{
+	int slot;
+	bool was_used;
+	struct bt_device previous;
+	int ret;
+
+	if (!valid_address(address) || (name == NULL && name_len > 0U) || name_len > BT_MGR_NAME_MAX) {
+		return -EINVAL;
+	}
+
+	k_mutex_lock(&ctx.lock, K_FOREVER);
+	slot = devstore_find(address);
+	if (slot < 0) {
+		for (uint8_t i = 0; i < BT_MGR_MAX_DEVICES; i++) {
+			if (!ctx.device_used[i]) {
+				slot = i;
+				break;
+			}
+		}
+	}
+	if (slot < 0) {
+		k_mutex_unlock(&ctx.lock);
+		return -ENOSPC;
+	}
+
+	was_used = ctx.device_used[slot];
+	previous = ctx.devices[slot];
+	if (!was_used) {
+		memset(&ctx.devices[slot], 0, sizeof(ctx.devices[slot]));
+		ctx.devices[slot].version = BT_DEVICE_VERSION;
+		strncpy(ctx.devices[slot].address, address, BT_MGR_ADDR_TEXT);
+		ctx.device_used[slot] = true;
+	}
+	memset(ctx.devices[slot].name, 0, sizeof(ctx.devices[slot].name));
+	if (name_len > 0U) {
+		memcpy(ctx.devices[slot].name, name, name_len);
+	}
+	ret = devstore_save((uint8_t)slot);
+	if (ret < 0) {
+		LOG_ERR("failed to persist device info addr=%s slot=%d: %d", address, slot, ret);
+		ctx.devices[slot] = previous;
+		ctx.device_used[slot] = was_used;
+	}
+	k_mutex_unlock(&ctx.lock);
+
+	if (ret < 0) {
+		return ret;
+	}
+	if (!was_used) {
+		(void)i2616e_whitelist_add_address(ctx.dev, address);
+	}
+	LOG_INF("saved device info addr=%s slot=%d name_len=%zu", address, slot, name_len);
+	return 0;
+}
+
+int bt_manager_get_plug_and_charge(const char *address, bool *enabled)
+{
+	int slot;
+
+	if (!valid_address(address) || enabled == NULL) {
+		return -EINVAL;
+	}
+
+	k_mutex_lock(&ctx.lock, K_FOREVER);
+	slot = devstore_find(address);
+	if (slot >= 0) {
+		*enabled = ctx.devices[slot].pnc != 0U;
+	}
+	k_mutex_unlock(&ctx.lock);
+
+	return slot >= 0 ? 0 : -ENOENT;
+}
+
+int bt_manager_set_plug_and_charge(const char *address, bool enabled)
+{
+	int slot;
+	uint8_t previous;
+	int ret = 0;
+
+	if (!valid_address(address)) {
+		return -EINVAL;
+	}
+
+	k_mutex_lock(&ctx.lock, K_FOREVER);
+	slot = devstore_find(address);
+	if (slot >= 0) {
+		previous = ctx.devices[slot].pnc;
+		ctx.devices[slot].pnc = enabled ? 1U : 0U;
+		ret = devstore_save((uint8_t)slot);
+		if (ret < 0) {
+			LOG_ERR("failed to persist pnc addr=%s slot=%d: %d", address, slot, ret);
+			ctx.devices[slot].pnc = previous;
+		}
+	}
+	k_mutex_unlock(&ctx.lock);
+
+	if (slot < 0) {
+		return -ENOENT;
+	}
+	if (ret == 0) {
+		LOG_INF("saved pnc addr=%s enabled=%u", address, enabled ? 1U : 0U);
+	}
+	return ret;
 }
 
 int bt_manager_forget(const char *address)

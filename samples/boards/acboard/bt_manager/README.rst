@@ -19,13 +19,25 @@ The manager (``src/bt_manager.c``):
 * persists the paired-device table through the Settings subsystem
   (``cfg/bt`` subtree on the Bank1 LittleFS) and mirrors authorisations into
   the module whitelist,
-* exposes ``bt_manager_send()``, ``bt_manager_device_count()`` and
-  ``bt_manager_forget()``.
+* exposes channel send, paired-device query/update, plug-and-charge flag, and
+  forget operations.
 
-The demo ``main.c`` brings the manager up and echoes any received PDU back to
-the sender. Pair a phone with the advertised device ``ID. UNYX Pro AC999``: the
-manager records the device, and the record survives resets (it is reloaded from
-flash on the next boot). The next layer to add on top is the APP PDU codec.
+The APP protocol layer (``src/bt_app.c``) implements the wallbox phone-app frame
+format (``0xff, node, command, payload length, payload, checksum``) and handles:
+
+* authentication check,
+* pile status query,
+* charge start/stop command response,
+* paired-device list query,
+* APP device-name report,
+* delete paired/current device,
+* plug-and-charge enable/disable/query.
+
+Pair a phone with the advertised device ``ID. UNYX Pro AC999``. The manager
+records the device, the APP protocol can fill in its name and plug-and-charge
+flag, and the record survives resets. Charging control is currently a bring-up
+stub inside the sample; replace the local simulated status with the real charger
+service when this layer is moved into the product application.
 
 Build and flash
 ***************
