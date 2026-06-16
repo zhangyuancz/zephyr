@@ -1,0 +1,31 @@
+/ {
+	fstab {
+		compatible = "zephyr,fstab";
+
+		lfs_storage: lfs_storage {
+			compatible = "zephyr,fstab,littlefs";
+			mount-point = "/lfs";
+			partition = <&storage_partition>;
+			automount;
+			read-size = <256>;
+			prog-size = <256>;
+			cache-size = <4096>;
+			lookahead-size = <256>;
+			block-cycles = <512>;
+		};
+	};
+};
+
+/* Bank1 (0x200000-0x3FFFFF, 2MB) holds the LittleFS that backs Settings. */
+&flash0 {
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		storage_partition: partition@200000 {
+			label = "storage";
+			reg = <0x00200000 DT_SIZE_M(2)>;
+		};
+	};
+};

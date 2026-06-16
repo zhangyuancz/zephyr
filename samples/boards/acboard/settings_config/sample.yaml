@@ -1,0 +1,12 @@
+sample:
+  name: ACBoard settings config store
+common:
+  platform_allow:
+    - acboard_f527
+  tags:
+    - settings
+    - filesystem
+    - flash
+tests:
+  sample.boards.acboard.settings_config:
+    build_only: true
