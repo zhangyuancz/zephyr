@@ -1,0 +1,11 @@
+sample:
+  name: ACBoard Bluetooth manager
+common:
+  platform_allow:
+    - acboard_f527
+  tags:
+    - bluetooth
+    - settings
+tests:
+  sample.boards.acboard.bt_manager:
+    build_only: true

@@ -1,0 +1,49 @@
+#include <zephyr/dt-bindings/gpio/gpio.h>
+#include <zephyr/dt-bindings/dma/gd32_dma.h>
+
+/ {
+	fstab {
+		compatible = "zephyr,fstab";
+
+		lfs_storage: lfs_storage {
+			compatible = "zephyr,fstab,littlefs";
+			mount-point = "/lfs";
+			partition = <&storage_partition>;
+			automount;
+			read-size = <256>;
+			prog-size = <256>;
+			cache-size = <4096>;
+			lookahead-size = <256>;
+			block-cycles = <512>;
+		};
+	};
+};
+
+&usart2 {
+	status = "okay";
+	current-speed = <115200>;
+	pinctrl-0 = <&usart2_default>;
+	pinctrl-names = "default";
+	dmas = <&dma0 1 4 GD32_DMA_PRIORITY_HIGH 3>,
+	       <&dma0 3 4 GD32_DMA_PRIORITY_HIGH 3>;
+	dma-names = "rx", "tx";
+
+	bluetooth: i2616e {
+		compatible = "barrot,i2616e";
+		reset-gpios = <&gpiod 12 GPIO_ACTIVE_LOW>;
+	};
+};
+
+/* Bank1 (2MB) holds the LittleFS that backs the Settings device table. */
+&flash0 {
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		storage_partition: partition@200000 {
+			label = "storage";
+			reg = <0x00200000 DT_SIZE_M(2)>;
+		};
+	};
+};
