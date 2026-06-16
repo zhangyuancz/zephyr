@@ -1,0 +1,25 @@
+description: BARROT i2616e BLE module using its UART AT command interface
+
+compatible: "barrot,i2616e"
+
+include: uart-device.yaml
+
+properties:
+  reset-gpios:
+    type: phandle-array
+    required: true
+    description: Hardware reset signal, normally active low
+
+  reset-assert-duration-ms:
+    type: int
+    default: 200
+    description: Time to keep hardware reset asserted
+
+  ready-timeout-ms:
+    type: int
+    default: 5000
+    description: Time to wait for IM_READY after reset
+
+  sleep-enable-gpios:
+    type: phandle-array
+    description: Optional module sleep-enable control signal

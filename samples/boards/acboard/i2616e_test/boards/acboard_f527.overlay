@@ -1,15 +1,17 @@
 #include <zephyr/dt-bindings/gpio/gpio.h>
-
-/ {
-	zephyr,user {
-		bluetooth-uart = <&usart2>;
-		bluetooth-reset-gpios = <&gpiod 12 GPIO_ACTIVE_LOW>;
-	};
-};
+#include <zephyr/dt-bindings/dma/gd32_dma.h>
 
 &usart2 {
 	status = "okay";
 	current-speed = <115200>;
 	pinctrl-0 = <&usart2_default>;
 	pinctrl-names = "default";
+	dmas = <&dma0 1 4 GD32_DMA_PRIORITY_HIGH 3>,
+	       <&dma0 3 4 GD32_DMA_PRIORITY_HIGH 3>;
+	dma-names = "rx", "tx";
+
+	bluetooth: i2616e {
+		compatible = "barrot,i2616e";
+		reset-gpios = <&gpiod 12 GPIO_ACTIVE_LOW>;
+	};
 };

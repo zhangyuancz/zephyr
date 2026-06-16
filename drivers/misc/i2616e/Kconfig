@@ -1,0 +1,39 @@
+# Copyright (c) 2026
+# SPDX-License-Identifier: Apache-2.0
+
+config I2616E
+	bool "BARROT i2616e BLE module"
+	default y
+	depends on DT_HAS_BARROT_I2616E_ENABLED
+	depends on UART_ASYNC_API
+	depends on GPIO
+	select MODEM_MODULES
+	select MODEM_BACKEND_UART
+	help
+	  Enable the UART AT-command driver for the BARROT i2616e BLE module.
+	  The driver supports binary-safe PDU transfer, connection and pairing
+	  events, configuration, negotiated MTU queries, and whitelist management.
+
+if I2616E
+
+config I2616E_INIT_PRIORITY
+	int "i2616e init priority"
+	default 90
+	help
+	  Driver initialization priority in POST_KERNEL. Must be after UART and
+	  GPIO drivers.
+
+config I2616E_EVENT_QUEUE_SIZE
+	int "i2616e event queue depth"
+	default 4
+	range 1 32
+	help
+	  Number of asynchronous module events (connection, pairing, received
+	  PDU, ...) that can be buffered before i2616e_get_event() consumes them.
+	  Each slot holds a full event including its PDU payload.
+
+module = I2616E
+module-str = i2616e
+source "subsys/logging/Kconfig.template.log_config"
+
+endif # I2616E

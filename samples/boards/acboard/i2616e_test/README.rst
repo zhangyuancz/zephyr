@@ -4,8 +4,9 @@
 ACBoard i2616e BLE module test
 ################################
 
-This sample validates the UART and control signals connected to the BARROT
-i2616e BLE 5.4 module on ACBoard-F527.
+This sample exercises the BARROT i2616e BLE 5.4 module driver
+(:kconfig:option:`CONFIG_I2616E`) on ACBoard-F527. The module is described as a
+``barrot,i2616e`` child of ``usart2`` in the board overlay.
 
 The sample uses these signals:
 
@@ -13,11 +14,13 @@ The sample uses these signals:
 * ``PD9 / USART2_RX``: module UART transmit
 * ``PD12``: module hardware reset, active low
 
-The module is continuously powered. The sample drives reset low for 200 ms,
-returns it high, prints asynchronous startup data, and
-queries its firmware version, configured name, local Bluetooth address, mode,
-and advertising state. It then sends ``AT+ADV=1`` and confirms the advertising
-state. Commands end with carriage return as required by the module.
+The module is continuously powered. The sample resets the module through the
+driver and waits for the ``IM_READY`` indication, reads the module information
+(firmware/config version, name, local Bluetooth address, baudrate, flow control
+and BLE mode), applies the bring-up settings (device name, peripheral mode, PDU
+command mode, multi-connection, auto-unlock and advertising), prints the
+whitelist, and then loops delivering asynchronous events. Pairing requests are
+auto-accepted and received PDUs are echoed back to the peer.
 
 Build and flash
 ***************
