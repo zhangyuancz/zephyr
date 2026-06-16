@@ -1,0 +1,40 @@
+/ {
+	fstab {
+		compatible = "zephyr,fstab";
+
+		lfs_storage: lfs_storage {
+			compatible = "zephyr,fstab,littlefs";
+			mount-point = "/lfs";
+			partition = <&storage_partition>;
+			automount;
+			/*
+			 * Bank1 erase blocks are 128KB. read/prog/cache/lookahead
+			 * must all divide the block size evenly.
+			 */
+			read-size = <256>;
+			prog-size = <256>;
+			cache-size = <4096>;
+			lookahead-size = <256>;
+			block-cycles = <512>;
+		};
+	};
+};
+
+/*
+ * Bank1 (0x200000-0x3FFFFF, 2MB) is reserved as configuration storage. The
+ * first erase block (128KB) is physically the group 4x16KB + 64KB, which sums
+ * to exactly 128KB, so a uniform 128KB LittleFS block aligns across the whole
+ * bank.
+ */
+&flash0 {
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		storage_partition: partition@200000 {
+			label = "storage";
+			reg = <0x00200000 DT_SIZE_M(2)>;
+		};
+	};
+};

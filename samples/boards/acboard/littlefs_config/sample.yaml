@@ -1,0 +1,11 @@
+sample:
+  name: ACBoard LittleFS config storage
+common:
+  platform_allow:
+    - acboard_f527
+  tags:
+    - filesystem
+    - flash
+tests:
+  sample.boards.acboard.littlefs_config:
+    build_only: true
