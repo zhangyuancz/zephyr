@@ -255,6 +255,12 @@ static void handle_authenticated(const struct i2616e_event *event)
 		strncpy(ch->address, event->address, BT_MGR_ADDR_TEXT);
 		mapped = true;
 	}
+
+	/* The peer is link-layer authenticated (e.g. via PIN). A new device is
+	 * recorded and whitelisted only if the table has room; when it is full
+	 * the device still connects but is not persisted, leaving the "list
+	 * full, delete one" decision to the APP layer.
+	 */
 	if (devstore_find(event->address) < 0) {
 		added = (devstore_add(event->address) >= 0);
 	}
