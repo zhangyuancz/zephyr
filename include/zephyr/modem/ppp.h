@@ -74,6 +74,14 @@ struct modem_ppp {
 	/* Hook for PPP L2 network interface initialization */
 	modem_ppp_init_iface init_iface;
 
+	/*
+	 * When set, an in-band "NO CARRIER" in the received stream drives the
+	 * bound net_if carrier off directly. Off by default so consumers that
+	 * own carrier transitions themselves (e.g. modem_cellular) are not
+	 * affected; opt in via modem_ppp_notify_on_no_carrier().
+	 */
+	bool notify_on_no_carrier;
+
 	atomic_t state;
 
 	/* Buffers used for processing partial frames */
@@ -138,6 +146,18 @@ int modem_ppp_attach(struct modem_ppp *ppp, struct modem_pipe *pipe);
  * @returns Pointer to network interface modem PPP instance is bound to
  */
 struct net_if *modem_ppp_get_iface(struct modem_ppp *ppp);
+
+/**
+ * @brief Enable driving the bound net_if carrier off on in-band "NO CARRIER"
+ *
+ * @details Disabled by default. Intended for simple PPP-dial modems that have
+ * no other link-down detection. Drivers that manage carrier through their own
+ * state machine (e.g. modem_cellular) must leave this off.
+ *
+ * @param ppp Modem PPP instance
+ * @param enable Whether a received "NO CARRIER" should set the carrier off
+ */
+void modem_ppp_notify_on_no_carrier(struct modem_ppp *ppp, bool enable);
 
 /**
  * @brief Release pipe from instance

@@ -511,6 +511,11 @@ static int l511_init(const struct device *dev)
 		return ret;
 	}
 
+	/* This modem has no out-of-band link-down detection, so let modem_ppp
+	 * drop the carrier when it sees "NO CARRIER" in the data stream.
+	 */
+	modem_ppp_notify_on_no_carrier(cfg->ppp, true);
+
 	net_mgmt_init_event_callback(&data->net_cb, l511_net_event_handler,
 				     NET_EVENT_PPP_PHASE_DEAD | NET_EVENT_PPP_CARRIER_OFF);
 	net_mgmt_add_event_callback(&data->net_cb);

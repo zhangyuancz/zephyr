@@ -214,7 +214,7 @@ static void modem_ppp_process_received_byte(struct modem_ppp *ppp, uint8_t byte)
 				LOG_WRN("Received 'NO CARRIER' event");
 				ppp->receive_state = MODEM_PPP_RECEIVE_STATE_HDR_SOF;
 				atomic_set_bit(&ppp->state, MODEM_PPP_STATE_DEAD_BIT);
-				if (ppp->iface != NULL) {
+				if (ppp->notify_on_no_carrier && ppp->iface != NULL) {
 					net_if_carrier_off(ppp->iface);
 					net_if_dormant_on(ppp->iface);
 				}
@@ -590,6 +590,11 @@ int modem_ppp_attach(struct modem_ppp *ppp, struct modem_pipe *pipe)
 struct net_if *modem_ppp_get_iface(struct modem_ppp *ppp)
 {
 	return ppp->iface;
+}
+
+void modem_ppp_notify_on_no_carrier(struct modem_ppp *ppp, bool enable)
+{
+	ppp->notify_on_no_carrier = enable;
 }
 
 void modem_ppp_release(struct modem_ppp *ppp)
