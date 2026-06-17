@@ -9,5 +9,6 @@ config SOC_SERIES_GD32F5XX
 	select ARMV8_M_DSP
 	select GD32_HAS_AF_PINMUX
 	select SOC_EARLY_INIT_HOOK
+	select SOC_EARLY_RESET_HOOK
 
 rsource "Kconfig.clocks"
