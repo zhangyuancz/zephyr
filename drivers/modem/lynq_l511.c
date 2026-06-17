@@ -16,7 +16,6 @@
 #define DT_DRV_COMPAT lynq_l511
 
 #include <stdlib.h>
-#include <string.h>
 
 #include <zephyr/device.h>
 #include <zephyr/drivers/gpio.h>
@@ -35,7 +34,6 @@ LOG_MODULE_REGISTER(lynq_l511, CONFIG_MODEM_LYNQ_L511_LOG_LEVEL);
 
 #define L511_UART_RX_BUF_SIZE  2048U
 #define L511_UART_TX_BUF_SIZE  1024U
-#define L511_RESP_BUF_SIZE     768U
 #define L511_CHAT_RX_BUF_SIZE  256U
 #define L511_CHAT_ARGV_SIZE    8U
 #define L511_PPP_MTU           1500
@@ -62,7 +60,6 @@ struct l511_data {
 	struct k_event events;
 	uint8_t uart_rx_buf[L511_UART_RX_BUF_SIZE];
 	uint8_t uart_tx_buf[L511_UART_TX_BUF_SIZE];
-	uint8_t resp_buf[L511_RESP_BUF_SIZE];
 	uint8_t chat_rx_buf[L511_CHAT_RX_BUF_SIZE];
 	uint8_t chat_delimiter[1];
 	uint8_t chat_filter[1];
@@ -175,6 +172,7 @@ static void l511_chat_on_cgatt(struct modem_chat *chat, char **argv, uint16_t ar
 }
 
 MODEM_CHAT_MATCH_DEFINE(ok_match, "OK", "", NULL);
+MODEM_CHAT_MATCH_DEFINE(connect_match, "CONNECT", "", NULL);
 MODEM_CHAT_MATCH_DEFINE(any_line_match, "", "", l511_chat_on_line);
 MODEM_CHAT_MATCH_DEFINE(cpin_match, "+CPIN: ", "", l511_chat_on_cpin);
 MODEM_CHAT_MATCH_DEFINE(csq_match, "+CSQ: ", ",", l511_chat_on_csq);
@@ -240,44 +238,34 @@ MODEM_CHAT_SCRIPT_CMDS_DEFINE(
 MODEM_CHAT_SCRIPT_DEFINE(attach_script, attach_script_cmds, abort_matches, NULL,
 			 CONFIG_MODEM_LYNQ_L511_ATTACH_SCRIPT_TIMEOUT_SEC);
 
+/*
+ * Switch from AT command mode into the PPP data session. The script completes
+ * the moment "CONNECT" is matched; modem_chat then stops consuming bytes and the
+ * pipe is handed to modem_ppp, so this is also where the AT-text/PPP-data
+ * boundary is crossed. The modem may answer "CONNECT <rate>", which the prefix
+ * match handles.
+ */
+MODEM_CHAT_SCRIPT_CMDS_DEFINE(
+	dial_script_cmds,
+	MODEM_CHAT_SCRIPT_CMD_RESP("ATD*99#", connect_match));
+
+MODEM_CHAT_SCRIPT_DEFINE(dial_script, dial_script_cmds, abort_matches, NULL,
+			 CONFIG_MODEM_LYNQ_L511_DIAL_TIMEOUT_SEC);
+
 /* ------------------------------------------------------------------------- */
-/* Raw AT over the UART pipe                                                 */
+/* Boot banner drain                                                         */
 /* ------------------------------------------------------------------------- */
 
-static int l511_write_all(struct l511_data *data, const uint8_t *buf, size_t len)
+/* Drain and discard unsolicited bytes (power-on banner, early URCs) until the
+ * UART has been idle for @idle_ms, so they don't confuse the first AT script.
+ */
+static void l511_drain_boot_banner(struct l511_data *data, int idle_ms)
 {
-	size_t off = 0U;
-	int64_t deadline = k_uptime_get() + 1000;
-
-	while (off < len) {
-		int ret = modem_pipe_transmit(data->pipe, &buf[off], len - off);
-
-		if (ret < 0) {
-			return ret;
-		}
-		if (ret == 0) {
-			if (k_uptime_get() >= deadline) {
-				return -ETIMEDOUT;
-			}
-			k_msleep(1);
-			continue;
-		}
-		off += ret;
-		deadline = k_uptime_get() + 1000;
-	}
-
-	return 0;
-}
-
-/* Read into resp_buf until the line is idle for @idle_ms; NUL-terminated. */
-static size_t l511_collect(struct l511_data *data, int idle_ms)
-{
-	size_t total = 0U;
+	uint8_t scratch[64];
 	int64_t deadline = k_uptime_get() + idle_ms;
 
-	while (k_uptime_get() < deadline && total < (sizeof(data->resp_buf) - 1U)) {
-		int ret = modem_pipe_receive(data->pipe, &data->resp_buf[total],
-					     sizeof(data->resp_buf) - 1U - total);
+	while (k_uptime_get() < deadline) {
+		int ret = modem_pipe_receive(data->pipe, scratch, sizeof(scratch));
 
 		if (ret < 0) {
 			break;
@@ -286,12 +274,8 @@ static size_t l511_collect(struct l511_data *data, int idle_ms)
 			k_msleep(5);
 			continue;
 		}
-		total += ret;
 		deadline = k_uptime_get() + idle_ms;
 	}
-
-	data->resp_buf[total] = '\0';
-	return total;
 }
 
 static int l511_chat_run(struct l511_data *data, const struct modem_chat_script *script)
@@ -377,50 +361,8 @@ static int l511_network_ready(struct l511_data *data)
 
 static int l511_dial(struct l511_data *data)
 {
-	char line[160];
-	size_t len = 0U;
-	int64_t deadline;
-	int ret;
-
 	LOG_DBG("AT: ATD*99#");
-	ret = l511_write_all(data, (const uint8_t *)"ATD*99#\r\n", 9U);
-	if (ret < 0) {
-		return ret;
-	}
-
-	deadline = k_uptime_get() + CONFIG_MODEM_LYNQ_L511_DIAL_TIMEOUT_MS;
-	while (k_uptime_get() < deadline) {
-		uint8_t b;
-
-		ret = modem_pipe_receive(data->pipe, &b, 1U);
-		if (ret < 0) {
-			return ret;
-		}
-		if (ret == 0) {
-			k_msleep(5);
-			continue;
-		}
-		if (b == '\r') {
-			continue;
-		}
-		if (b == '\n') {
-			if (len == 0U) {
-				continue;
-			}
-			line[len] = '\0';
-			LOG_DBG("AT: %s", line);
-			if (strcmp(line, "CONNECT") == 0) {
-				return 0;
-			}
-			len = 0U;
-			continue;
-		}
-		if (len < sizeof(line) - 1U) {
-			line[len++] = (char)b;
-		}
-	}
-
-	return -ETIMEDOUT;
+	return l511_chat_run(data, &dial_script);
 }
 
 static int l511_bringup(const struct device *dev)
@@ -441,7 +383,7 @@ static int l511_bringup(const struct device *dev)
 	LOG_DBG("pipe open");
 
 	l511_power_on(cfg);
-	(void)l511_collect(data, cfg->boot_drain_timeout_ms);
+	l511_drain_boot_banner(data, cfg->boot_drain_timeout_ms);
 	k_msleep(cfg->at_ready_delay_ms);
 
 	ret = l511_run_init(data);

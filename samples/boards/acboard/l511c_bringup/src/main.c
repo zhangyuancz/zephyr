@@ -25,13 +25,15 @@
 #include <zephyr/net/sntp.h>
 #include <zephyr/net/tls_credentials.h>
 #include <zephyr/net/websocket.h>
-#include <zephyr/sys/printk.h>
+#include <zephyr/logging/log.h>
 
 #include <mbedtls/x509.h>
 #include <mbedtls/x509_crt.h>
 
 #include "tls_certificates.h"
 #include "ocpp_bridge.h"
+
+LOG_MODULE_REGISTER(l511c, LOG_LEVEL_INF);
 
 /* OCPP server (WSS / TLS) */
 #define OCPP_SERVER_HOST  "47.111.208.192"
@@ -83,11 +85,11 @@ static void ppp_event_handler(uint64_t event, struct net_if *iface,
 	ARG_UNUSED(info); ARG_UNUSED(info_length); ARG_UNUSED(user_data);
 	if (iface != CELL_IFACE) { return; }
 	switch (event) {
-	case NET_EVENT_PPP_PHASE_DEAD:   printk("ppp: DEAD\n"); break;
-	case NET_EVENT_PPP_PHASE_RUNNING: printk("ppp: RUN\n"); break;
-	case NET_EVENT_PPP_CARRIER_ON:   printk("ppp: CARRIER ON\n"); break;
+	case NET_EVENT_PPP_PHASE_DEAD:   LOG_DBG("ppp: DEAD"); break;
+	case NET_EVENT_PPP_PHASE_RUNNING: LOG_DBG("ppp: RUN"); break;
+	case NET_EVENT_PPP_CARRIER_ON:   LOG_INF("ppp: carrier on"); break;
 	case NET_EVENT_PPP_CARRIER_OFF:
-		printk("ppp: CARRIER OFF\n");
+		LOG_INF("ppp: carrier off");
 		k_event_clear(&ppp_events, PPP_EVENT_CONNECTED | PPP_EVENT_DNS_READY);
 		k_event_post(&ppp_events, PPP_EVENT_DISCONNECTED);
 		break;
@@ -131,48 +133,48 @@ static int ws_connect(void)
 	/* Register certificates for mTLS */
 	ret = tls_credential_add_once(CA_CERTIFICATE_TAG, TLS_CREDENTIAL_CA_CERTIFICATE,
 				      ca_certificate, sizeof(ca_certificate));
-	if (ret < 0) { printk("CA cert add err: %d\n", ret); return ret; }
-	printk("CA cert ok (tag=%d)\n", CA_CERTIFICATE_TAG);
+	if (ret < 0) { LOG_ERR("CA cert add err: %d", ret); return ret; }
+	LOG_DBG("CA cert ok (tag=%d)", CA_CERTIFICATE_TAG);
 
 	ret = tls_credential_add_once(CLIENT_CERT_TAG, TLS_CREDENTIAL_PUBLIC_CERTIFICATE,
 				      client_certificate, sizeof(client_certificate));
-	if (ret < 0) { printk("Client cert add err: %d\n", ret); return ret; }
+	if (ret < 0) { LOG_ERR("Client cert add err: %d", ret); return ret; }
 
 	ret = tls_credential_add_once(CLIENT_CERT_TAG, TLS_CREDENTIAL_PRIVATE_KEY,
 				      client_private_key, sizeof(client_private_key));
-	if (ret < 0) { printk("Client key add err: %d\n", ret); return ret; }
-	printk("Client cert+key ok (tag=%d)\n", CLIENT_CERT_TAG);
+	if (ret < 0) { LOG_ERR("Client key add err: %d", ret); return ret; }
+	LOG_DBG("Client cert+key ok (tag=%d)", CLIENT_CERT_TAG);
 
 	/* Sync time for cert validity check */
 	{
 		struct sntp_time sntp_ts;
 		struct timespec ts;
-		printk("SNTP ...\n");
+		LOG_DBG("SNTP ...");
 		ret = sntp_simple("203.107.6.88", 5000, &sntp_ts);
 		if (ret < 0) { ret = sntp_simple("ntp.aliyun.com", 8000, &sntp_ts); }
 		if (ret >= 0) {
 			ts.tv_sec = (time_t)sntp_ts.seconds; ts.tv_nsec = 0;
 			clock_settime(CLOCK_REALTIME, &ts);
-			printk("SNTP ok\n");
+			LOG_DBG("SNTP ok");
 		} else {
 			/* Fallback: June 8, 2026 */
 			ts.tv_sec = 1780876800; ts.tv_nsec = 0;
 			clock_settime(CLOCK_REALTIME, &ts);
-			printk("SNTP fail (%d), using hardcoded time\n", ret);
+			LOG_WRN("SNTP fail (%d), using hardcoded time", ret);
 		}
 	}
 
 	/* DNS resolve */
-	printk("resolve %s:%s\n", OCPP_SERVER_HOST, OCPP_SERVER_PORT);
+	LOG_DBG("resolve %s:%s", OCPP_SERVER_HOST, OCPP_SERVER_PORT);
 	ret = zsock_getaddrinfo(OCPP_SERVER_HOST, OCPP_SERVER_PORT, &hints, &ai);
 	if (ret != 0 || !ai) { ret = -ENOENT; goto out; }
 	memcpy(&peer, ai->ai_addr, sizeof(peer));
 	zsock_freeaddrinfo(ai); ai = NULL;
 	zsock_inet_ntop(AF_INET, &peer.sin_addr, addr, sizeof(addr));
-	printk("-> %s:%u\n", addr, ntohs(peer.sin_port));
+	LOG_DBG("-> %s:%u", addr, ntohs(peer.sin_port));
 
 	/* Test plain TCP connectivity first */
-	printk("TCP test to %s:%u ...\n", addr, ntohs(peer.sin_port));
+	LOG_DBG("TCP test to %s:%u ...", addr, ntohs(peer.sin_port));
 	{
 		int tsock = zsock_socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 		if (tsock >= 0) {
@@ -180,13 +182,13 @@ static int ws_connect(void)
 			zsock_setsockopt(tsock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 			int tret = zsock_connect(tsock, (struct sockaddr *)&peer, sizeof(peer));
 			if (tret < 0) {
-				printk("TCP test fail: %d\n", -errno);
+				LOG_WRN("TCP test fail: %d", -errno);
 			} else {
-				printk("TCP test ok (SYN reached server)\n");
+				LOG_DBG("TCP test ok (SYN reached server)");
 			}
 			zsock_close(tsock);
 		} else {
-			printk("TCP test socket create fail: %d\n", -errno);
+			LOG_WRN("TCP test socket create fail: %d", -errno);
 		}
 	}
 
@@ -194,7 +196,7 @@ static int ws_connect(void)
 	sock = zsock_socket(AF_INET, SOCK_STREAM, IPPROTO_TLS_1_2);
 	if (sock < 0) {
 		ret = -errno;
-		printk("TLS socket err: %d\n", ret);
+		LOG_ERR("TLS socket err: %d", ret);
 		goto out;
 	}
 
@@ -224,10 +226,10 @@ static int ws_connect(void)
 		zsock_setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 	}
 
-	printk("TLS connecting ...\n");
+	LOG_DBG("TLS connecting ...");
 	ret = zsock_connect(sock, (struct sockaddr *)&peer, sizeof(peer));
-	if (ret < 0) { printk("TLS connect err: %d\n", -errno); ret = -errno; goto out; }
-	printk("TLS ok\n");
+	if (ret < 0) { LOG_ERR("TLS connect err: %d", -errno); ret = -errno; goto out; }
+	LOG_INF("TLS ok");
 
 	/* WebSocket upgrade over TLS */
 	const char *ocpp_headers[] = {
@@ -239,8 +241,8 @@ static int ws_connect(void)
 	req.optional_headers = ocpp_headers;
 	req.tmp_buf = ws_temp_buf; req.tmp_buf_len = sizeof(ws_temp_buf);
 	ws_fd = websocket_connect(sock, &req, 15000, NULL);
-	if (ws_fd < 0) { printk("ws upgrade err: %d\n", ws_fd); ret = ws_fd; goto out; }
-	printk("WSS ok (fd=%d)\n", ws_fd);
+	if (ws_fd < 0) { LOG_ERR("ws upgrade err: %d", ws_fd); ret = ws_fd; goto out; }
+	LOG_INF("WSS ok (fd=%d)", ws_fd);
 	return ws_fd;
 
 out:
@@ -260,7 +262,7 @@ static bool cellular_ready(void)
 
 static int wait_for_ppp_link(void)
 {
-	printk("waiting for cellular PPP link (driver brings it up) ...\n");
+	LOG_INF("waiting for cellular PPP link (driver brings it up) ...");
 
 	if (cellular_ready()) {
 		k_event_post(&ppp_events, PPP_EVENT_CONNECTED);
@@ -269,7 +271,7 @@ static int wait_for_ppp_link(void)
 
 	if ((k_event_wait(&ppp_events, PPP_EVENT_CONNECTED, false, K_SECONDS(180)) &
 	     PPP_EVENT_CONNECTED) == 0) {
-		printk("PPP timeout\n");
+		LOG_ERR("PPP timeout");
 		return -ETIMEDOUT;
 	}
 
@@ -280,7 +282,7 @@ static int wait_for_ppp_link(void)
 
 int main(void)
 {
-	printk("\n=== L511C OCPP on WSS ===\n\n");
+	LOG_INF("=== L511C OCPP on WSS ===");
 
 	while (1) {
 		if (wait_for_ppp_link() < 0) {
@@ -288,23 +290,23 @@ int main(void)
 			continue;
 		}
 
-		printk("PPP ok\n");
+		LOG_INF("PPP ok");
 		if ((k_event_wait(&ppp_events, PPP_EVENT_DNS_READY, false, K_SECONDS(2)) &
 		     PPP_EVENT_DNS_READY) == 0) {
-			printk("DNS not ready yet, continue with IP endpoint\n");
+			LOG_DBG("DNS not ready yet, continue with IP endpoint");
 		}
 		k_msleep(200);
 
 		int ws_fd = ws_connect();
 		if (ws_fd < 0) {
-			printk("WS fail: %d\n", ws_fd);
+			LOG_ERR("WS fail: %d", ws_fd);
 			k_msleep(5000);
 			continue;
 		}
 
-		printk("OCPP bridge start ...\n");
+		LOG_INF("OCPP bridge start ...");
 		int ret = ocpp_bridge_run(ws_fd, OCPP_SERVER_HOST, OCPP_CHARGEBOX_ID);
-		printk("OCPP bridge stopped: %d\n", ret);
+		LOG_WRN("OCPP bridge stopped: %d", ret);
 		k_msleep(5000);
 	}
 }

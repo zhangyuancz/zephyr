@@ -10,10 +10,11 @@ extern "C" {
 #include <zephyr/drivers/uart.h>
 #include <zephyr/fs/fs.h>
 #include <zephyr/net/websocket.h>
-#include <zephyr/sys/printk.h>
 #include <stdio.h>
 #include <string.h>
 }
+
+#include <zephyr/logging/log.h>
 
 #include <functional>
 #include <memory>
@@ -21,6 +22,8 @@ extern "C" {
 #include <MicroOcpp.h>
 #include <MicroOcpp/Core/Connection.h>
 #include <MicroOcpp/Core/FilesystemAdapter.h>
+
+LOG_MODULE_REGISTER(ocpp, LOG_LEVEL_INF);
 
 /* MicroOcpp files are stored under this mount point */
 #define MO_FS_PREFIX "/lfs1/"
@@ -81,7 +84,7 @@ public:
 
 		int ret = fs_open(&file_, path, flags);
 		if (ret < 0) {
-			printk("ocpp-fs: open(%s) err %d\n", path, ret);
+			LOG_ERR("fs: open(%s) err %d", path, ret);
 			valid_ = false;
 		} else {
 			valid_ = true;
@@ -170,7 +173,7 @@ public:
 
 		int ret = fs_opendir(&dir, MO_FS_PREFIX);
 		if (ret < 0) {
-			printk("ocpp-fs: opendir(%s) err %d\n", MO_FS_PREFIX, ret);
+			LOG_ERR("fs: opendir(%s) err %d", MO_FS_PREFIX, ret);
 			return ret;  /* non-zero = error, as MO expects */
 		}
 
@@ -202,7 +205,7 @@ public:
 					     &msg_type, &remaining, 0);
 		if (ret > 0) {
 			if (msg_type & WEBSOCKET_FLAG_CLOSE) {
-				printk("ocpp: ws close\n");
+				LOG_INF("ws close");
 				last_error_ = 0;
 				connected_ = false;
 				return;
@@ -211,7 +214,7 @@ public:
 				ret = websocket_send_msg(ws_fd_, nullptr, 0,
 							 WEBSOCKET_OPCODE_PONG, true, true, 1000);
 				if (ret < 0) {
-					printk("ocpp: ws pong err %d\n", ret);
+					LOG_WRN("ws pong err %d", ret);
 					last_error_ = ret;
 					connected_ = false;
 				}
@@ -219,9 +222,8 @@ public:
 			}
 			if (msg_type & (WEBSOCKET_FLAG_TEXT | WEBSOCKET_FLAG_BINARY)) {
 				buf[ret] = '\0';
-				/* Print received message (first 256 chars) */
-				printk("OCPP<- %.*s%s\n", (ret > 256 ? 256 : ret),
-				       (const char *)buf, ret > 256 ? "..." : "");
+				LOG_DBG("OCPP<- %.*s%s", (ret > 256 ? 256 : ret),
+					(const char *)buf, ret > 256 ? "..." : "");
 				if (recv_cb_) { recv_cb_((const char *)buf, (size_t)ret); }
 			}
 		} else if (ret == -EAGAIN) {
@@ -229,20 +231,19 @@ public:
 			last_error_ = ret;
 			connected_ = false;
 		} else if (ret < 0) {
-			printk("ocpp: ws err %d\n", ret);
+			LOG_WRN("ws err %d", ret);
 			last_error_ = ret;
 			connected_ = false;
 		}
 	}
 
 	bool sendTXT(const char *msg, size_t length) override {
-		/* Print sent message (first 256 chars) */
-		printk("OCPP-> %.*s%s\n", ((int)length > 256 ? 256 : (int)length),
-		       msg, length > 256 ? "..." : "");
+		LOG_DBG("OCPP-> %.*s%s", ((int)length > 256 ? 256 : (int)length),
+			msg, length > 256 ? "..." : "");
 		int ret = websocket_send_msg(ws_fd_, (const uint8_t *)msg, length,
 					     WEBSOCKET_OPCODE_DATA_TEXT, true, true, 3000);
 		if (ret < 0) {
-			printk("ocpp: ws send err %d\n", ret);
+			LOG_WRN("ws send err %d", ret);
 			last_error_ = ret;
 			connected_ = false;
 		}
@@ -275,17 +276,17 @@ static void print_mo_config(void)
 
 	int ret = fs_opendir(&dir, MO_FS_PREFIX);
 	if (ret < 0) {
-		printk("--- MO config: opendir err %d ---\n", ret);
+		LOG_DBG("MO config: opendir err %d", ret);
 		return;
 	}
 
-	printk("\n--- MO config on flash (mount: %s) ---\n", MO_FS_PREFIX);
+	LOG_DBG("MO config on flash (mount: %s)", MO_FS_PREFIX);
 
 	while (fs_readdir(&dir, &entry) == 0) {
 		if (entry.name[0] == '\0') { break; }
 		if (entry.type == FS_DIR_ENTRY_DIR) { continue; }
 
-		printk("  [%s] (%u bytes)\n", entry.name, (unsigned)entry.size);
+		LOG_DBG("  [%s] (%u bytes)", entry.name, (unsigned)entry.size);
 
 		/* Read and print file content (up to 240 chars) */
 		struct fs_file_t file;
@@ -297,9 +298,9 @@ static void print_mo_config(void)
 			ssize_t n = fs_read(&file, buf, sizeof(buf) - 1);
 			if (n > 0) {
 				buf[n] = '\0';
-				printk("    %.*s%s\n",
-				       (n > 240 ? 240 : (int)n), buf,
-				       n > 240 ? "..." : "");
+				LOG_DBG("    %.*s%s",
+					(n > 240 ? 240 : (int)n), buf,
+					n > 240 ? "..." : "");
 			}
 			fs_close(&file);
 		}
@@ -312,9 +313,8 @@ static void print_mo_config(void)
 	if (fs_statvfs(MO_FS_PREFIX, &st) == 0) {
 		unsigned long total_kb = (st.f_blocks * st.f_frsize) / 1024;
 		unsigned long free_kb  = (st.f_bfree * st.f_frsize) / 1024;
-		printk("  [FS] %lu / %lu KB used\n", total_kb - free_kb, total_kb);
+		LOG_DBG("  [FS] %lu / %lu KB used", total_kb - free_kb, total_kb);
 	}
-	printk("--- end MO config ---\n\n");
 }
 
 /* ===== Entry point ===== */
@@ -323,7 +323,7 @@ extern "C" int ocpp_bridge_run(int ws_fd, const char *server_host,
 				const char *charge_box_id)
 {
 	ARG_UNUSED(server_host);
-	printk("ocpp: init box=%s\n", charge_box_id);
+	LOG_INF("init box=%s", charge_box_id);
 
 	ZephyrWSConnection conn(ws_fd);
 	conn.setConnected(true);
@@ -342,7 +342,7 @@ extern "C" int ocpp_bridge_run(int ws_fd, const char *server_host,
 		false,
 		MicroOcpp::ProtocolVersion(2, 0, 1));
 
-	printk("ocpp: running\n");
+	LOG_INF("running");
 
 	if (!config_dumped) {
 		print_mo_config();
@@ -358,7 +358,7 @@ extern "C" int ocpp_bridge_run(int ws_fd, const char *server_host,
 	}
 
 	int ret = conn.lastError();
-	printk("ocpp: stopped (%d)\n", ret);
+	LOG_INF("stopped (%d)", ret);
 	mocpp_deinitialize();
 	websocket_unregister(ws_fd);
 

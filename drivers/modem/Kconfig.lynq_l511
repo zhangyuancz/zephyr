@@ -42,9 +42,9 @@ config MODEM_LYNQ_L511_THREAD_PRIORITY
 	int "Bring-up thread priority"
 	default 7
 
-config MODEM_LYNQ_L511_DIAL_TIMEOUT_MS
-	int "PPP dial timeout in milliseconds"
-	default 30000
+config MODEM_LYNQ_L511_DIAL_TIMEOUT_SEC
+	int "PPP dial timeout in seconds"
+	default 30
 	help
 	  Maximum time to wait for CONNECT after ATD*99#.
 
