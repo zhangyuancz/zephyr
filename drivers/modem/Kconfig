@@ -195,3 +195,7 @@ source "drivers/modem/vendor_standalone/Kconfig"
 # zephyr-keep-sorted-stop
 
 endif # MODEM
+
+# Standalone modem drivers that build on the modem subsystem (subsys/modem)
+# rather than the legacy modem context framework, so they live outside if MODEM.
+source "drivers/modem/Kconfig.lynq_l511"

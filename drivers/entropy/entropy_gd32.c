@@ -16,9 +16,9 @@
 #include <zephyr/sys/util.h>
 #include <string.h>
 
-/* GD32 HAL headers */
-#include <gd32f4xx_rcu.h>
-#include <gd32f4xx_trng.h>
+/* GD32 HAL headers (series-agnostic shims) */
+#include <gd32_rcu.h>
+#include <gd32_trng.h>
 
 LOG_MODULE_REGISTER(entropy_gd32, CONFIG_ENTROPY_LOG_LEVEL);
 

@@ -424,6 +424,7 @@ luatos	LuatOS Team
 luckfox	Shenzhen Luckfox Technology Co., Ltd.
 lwn	Liebherr-Werk Nenzing GmbH
 lxa	Linux Automation GmbH
+lynq	Lynq
 m5stack	M5Stack
 macnica	Macnica Americas
 madmachine	Shenzhen FeiKaiTe Technology Co., Ltd.

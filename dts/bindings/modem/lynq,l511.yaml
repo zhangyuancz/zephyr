@@ -1,0 +1,47 @@
+# Copyright (c) 2026
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  Lynq L511 LTE Cat.1 cellular modem.
+
+  The modem is driven over its UART with a 3GPP AT command set and provides
+  network connectivity through a PPP dial-up data session (ATD*99#). It is a
+  child of the UART it is wired to:
+
+    &usart0 {
+        modem: l511 {
+            compatible = "lynq,l511";
+            mdm-power-gpios = <&gpioa 12 GPIO_ACTIVE_HIGH>;
+            mdm-reset-gpios = <&gpioa 11 GPIO_ACTIVE_HIGH>;
+        };
+    };
+
+compatible: "lynq,l511"
+
+include: uart-device.yaml
+
+properties:
+  mdm-power-gpios:
+    type: phandle-array
+    required: true
+    description: Modem power-key control signal.
+
+  mdm-reset-gpios:
+    type: phandle-array
+    required: true
+    description: Modem reset signal.
+
+  reset-pulse-ms:
+    type: int
+    default: 200
+    description: Duration of the power-on reset pulse.
+
+  boot-drain-timeout-ms:
+    type: int
+    default: 3000
+    description: Time to drain unsolicited boot bytes from the UART after reset.
+
+  at-ready-delay-ms:
+    type: int
+    default: 5000
+    description: Delay after reset before running the first AT init script.

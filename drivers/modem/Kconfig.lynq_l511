@@ -1,0 +1,93 @@
+# Copyright (c) 2026
+# SPDX-License-Identifier: Apache-2.0
+
+config MODEM_LYNQ_L511
+	bool "Lynq L511 LTE Cat.1 cellular modem"
+	default y
+	depends on DT_HAS_LYNQ_L511_ENABLED
+	depends on NET_L2_PPP
+	select MODEM
+	select MODEM_MODULES
+	select MODEM_BACKEND_UART
+	select MODEM_CHAT
+	select MODEM_PIPE
+	select MODEM_PPP
+	select NET_MGMT
+	select NET_MGMT_EVENT
+	select GPIO
+	help
+	  Driver for the Lynq L511 LTE Cat.1 modem. It powers the module, runs the
+	  AT init/registration/dial scripts and brings up a PPP network interface.
+
+if MODEM_LYNQ_L511
+
+config MODEM_LYNQ_L511_APN
+	string "Access point name (APN)"
+	default "cmnet"
+	help
+	  APN used for the PDP context (AT+CGDCONT).
+
+config MODEM_LYNQ_L511_INIT_PRIORITY
+	int "Init priority"
+	default 90
+	help
+	  Device initialization priority in POST_KERNEL. Must be after the UART and
+	  GPIO drivers.
+
+config MODEM_LYNQ_L511_THREAD_STACK_SIZE
+	int "Bring-up thread stack size"
+	default 2048
+
+config MODEM_LYNQ_L511_THREAD_PRIORITY
+	int "Bring-up thread priority"
+	default 7
+
+config MODEM_LYNQ_L511_DIAL_TIMEOUT_MS
+	int "PPP dial timeout in milliseconds"
+	default 30000
+	help
+	  Maximum time to wait for CONNECT after ATD*99#.
+
+config MODEM_LYNQ_L511_REGISTRATION_RETRY_COUNT
+	int "Network registration retry count"
+	default 12
+	help
+	  Number of times to poll SIM/network readiness before restarting the
+	  bring-up attempt.
+
+config MODEM_LYNQ_L511_REGISTRATION_RETRY_INTERVAL_MS
+	int "Network registration retry interval in milliseconds"
+	default 3000
+
+config MODEM_LYNQ_L511_SIM_READY_RESTART_RETRY_COUNT
+	int "SIM-ready retry count before restarting bring-up"
+	default 3
+	help
+	  Consecutive AT+CPIN? failures before closing the pipe and restarting the
+	  whole bring-up attempt.
+
+config MODEM_LYNQ_L511_BRINGUP_RETRY_INTERVAL_MS
+	int "Bring-up retry interval in milliseconds"
+	default 10000
+
+config MODEM_LYNQ_L511_INIT_SCRIPT_TIMEOUT_SEC
+	int "AT init script timeout in seconds"
+	default 10
+
+config MODEM_LYNQ_L511_QUERY_SCRIPT_TIMEOUT_SEC
+	int "Short AT query script timeout in seconds"
+	default 5
+
+config MODEM_LYNQ_L511_IDENTITY_SCRIPT_TIMEOUT_SEC
+	int "SIM identity query timeout in seconds"
+	default 8
+
+config MODEM_LYNQ_L511_ATTACH_SCRIPT_TIMEOUT_SEC
+	int "Packet attach/PDP setup timeout in seconds"
+	default 8
+
+module = MODEM_LYNQ_L511
+module-str = lynq_l511
+source "subsys/logging/Kconfig.template.log_config"
+
+endif # MODEM_LYNQ_L511

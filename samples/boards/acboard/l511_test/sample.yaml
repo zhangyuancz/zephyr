@@ -1,0 +1,11 @@
+sample:
+  name: ACBoard Lynq L511 modem test
+common:
+  platform_allow:
+    - acboard_f527
+  tags:
+    - modem
+    - net
+tests:
+  sample.boards.acboard.l511_test:
+    build_only: true

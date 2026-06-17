@@ -202,11 +202,19 @@ public:
 					     &msg_type, &remaining, 0);
 		if (ret > 0) {
 			if (msg_type & WEBSOCKET_FLAG_CLOSE) {
-				printk("ocpp: ws close\n"); connected_ = false; return;
+				printk("ocpp: ws close\n");
+				last_error_ = 0;
+				connected_ = false;
+				return;
 			}
 			if (msg_type & WEBSOCKET_FLAG_PING) {
-				websocket_send_msg(ws_fd_, nullptr, 0,
-						   WEBSOCKET_OPCODE_PONG, true, true, 1000);
+				ret = websocket_send_msg(ws_fd_, nullptr, 0,
+							 WEBSOCKET_OPCODE_PONG, true, true, 1000);
+				if (ret < 0) {
+					printk("ocpp: ws pong err %d\n", ret);
+					last_error_ = ret;
+					connected_ = false;
+				}
 				return;
 			}
 			if (msg_type & (WEBSOCKET_FLAG_TEXT | WEBSOCKET_FLAG_BINARY)) {
@@ -218,9 +226,12 @@ public:
 			}
 		} else if (ret == -EAGAIN) {
 		} else if (ret == 0 || ret == -ENOTCONN) {
+			last_error_ = ret;
 			connected_ = false;
 		} else if (ret < 0) {
 			printk("ocpp: ws err %d\n", ret);
+			last_error_ = ret;
+			connected_ = false;
 		}
 	}
 
@@ -230,6 +241,11 @@ public:
 		       msg, length > 256 ? "..." : "");
 		int ret = websocket_send_msg(ws_fd_, (const uint8_t *)msg, length,
 					     WEBSOCKET_OPCODE_DATA_TEXT, true, true, 3000);
+		if (ret < 0) {
+			printk("ocpp: ws send err %d\n", ret);
+			last_error_ = ret;
+			connected_ = false;
+		}
 		return ret > 0;
 	}
 
@@ -237,10 +253,12 @@ public:
 	unsigned long getLastConnected() override { return last_connected_; }
 	bool isConnected() override { return connected_; }
 	void setConnected(bool c) { connected_ = c; last_connected_ = k_uptime_get(); }
+	int lastError() const { return last_error_; }
 
 private:
 	int ws_fd_;
 	bool connected_ = true;
+	int last_error_ = 0;
 	unsigned long last_connected_ = 0;
 	MicroOcpp::ReceiveTXTcallback recv_cb_;
 };
@@ -301,14 +319,16 @@ static void print_mo_config(void)
 
 /* ===== Entry point ===== */
 
-extern "C" void ocpp_bridge_start(int ws_fd, const char *server_host,
-				   const char *charge_box_id)
+extern "C" int ocpp_bridge_run(int ws_fd, const char *server_host,
+				const char *charge_box_id)
 {
+	ARG_UNUSED(server_host);
 	printk("ocpp: init box=%s\n", charge_box_id);
 
-	static ZephyrWSConnection conn(ws_fd);
+	ZephyrWSConnection conn(ws_fd);
 	conn.setConnected(true);
 	static ZephyrFS fs;
+	static bool config_dumped;
 
 	/* Route MO allocations via Zephyr heap (coalescing, less fragmentation) */
 	mo_mem_set_malloc_free(
@@ -324,12 +344,23 @@ extern "C" void ocpp_bridge_start(int ws_fd, const char *server_host,
 
 	printk("ocpp: running\n");
 
-	/* Dump MO configuration persisted on flash */
-	print_mo_config();
+	if (!config_dumped) {
+		print_mo_config();
+		config_dumped = true;
+	}
 
-	while (1) {
+	while (conn.isConnected()) {
 		mocpp_loop();
-		conn.loop();
+		if (conn.isConnected()) {
+			conn.loop();
+		}
 		k_msleep(10);
 	}
+
+	int ret = conn.lastError();
+	printk("ocpp: stopped (%d)\n", ret);
+	mocpp_deinitialize();
+	websocket_unregister(ws_fd);
+
+	return ret < 0 ? ret : -ENOTCONN;
 }

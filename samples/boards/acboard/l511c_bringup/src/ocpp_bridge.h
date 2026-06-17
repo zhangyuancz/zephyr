@@ -9,8 +9,8 @@
 extern "C" {
 #endif
 
-/** Start the OCPP stack. Blocks forever (runs the event loop). */
-void ocpp_bridge_start(int ws_fd, const char *server_host, const char *charge_box_id);
+/** Run the OCPP stack until the WebSocket disconnects or fails. */
+int ocpp_bridge_run(int ws_fd, const char *server_host, const char *charge_box_id);
 
 #ifdef __cplusplus
 }
