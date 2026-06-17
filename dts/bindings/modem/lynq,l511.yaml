@@ -36,11 +36,6 @@ properties:
     default: 200
     description: Duration of the power-on reset pulse.
 
-  boot-drain-timeout-ms:
-    type: int
-    default: 3000
-    description: Time to drain unsolicited boot bytes from the UART after reset.
-
   at-ready-delay-ms:
     type: int
     default: 5000

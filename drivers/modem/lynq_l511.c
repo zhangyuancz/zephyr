@@ -46,7 +46,6 @@ struct l511_config {
 	struct gpio_dt_spec power_gpio;
 	struct gpio_dt_spec reset_gpio;
 	uint32_t reset_pulse_ms;
-	uint32_t boot_drain_timeout_ms;
 	uint32_t at_ready_delay_ms;
 	struct modem_ppp *ppp;
 };
@@ -93,36 +92,18 @@ static void l511_net_event_handler(struct net_mgmt_event_callback *cb, uint64_t 
 /* AT chat scripts                                                           */
 /* ------------------------------------------------------------------------- */
 
-static void l511_chat_on_line(struct modem_chat *chat, char **argv, uint16_t argc,
+/* Shared logger for informational query responses (+CPIN/+CSQ/+ECICCID/+CGATT
+ * and bare lines like ATI/CIMI); argv[0] is the matched prefix, argv[1] the
+ * remainder.
+ */
+static void l511_chat_on_info(struct modem_chat *chat, char **argv, uint16_t argc,
 			      void *user_data)
 {
 	ARG_UNUSED(chat);
 	ARG_UNUSED(user_data);
 
 	if (argc >= 2U && argv[1][0] != '\0') {
-		LOG_DBG("AT: %s", argv[1]);
-	}
-}
-
-static void l511_chat_on_cpin(struct modem_chat *chat, char **argv, uint16_t argc,
-			      void *user_data)
-{
-	ARG_UNUSED(chat);
-	ARG_UNUSED(user_data);
-
-	if (argc >= 2U) {
-		LOG_DBG("AT: +CPIN: %s", argv[1]);
-	}
-}
-
-static void l511_chat_on_csq(struct modem_chat *chat, char **argv, uint16_t argc,
-			     void *user_data)
-{
-	ARG_UNUSED(chat);
-	ARG_UNUSED(user_data);
-
-	if (argc >= 3U) {
-		LOG_DBG("AT: +CSQ: %s,%s", argv[1], argv[2]);
+		LOG_DBG("AT: %s%s", argv[0], argv[1]);
 	}
 }
 
@@ -149,36 +130,14 @@ static void l511_chat_on_cereg(struct modem_chat *chat, char **argv, uint16_t ar
 	data->registered = (stat == 1) || (stat == 5);
 }
 
-static void l511_chat_on_eciccid(struct modem_chat *chat, char **argv, uint16_t argc,
-				 void *user_data)
-{
-	ARG_UNUSED(chat);
-	ARG_UNUSED(user_data);
-
-	if (argc >= 2U) {
-		LOG_DBG("AT: +ECICCID: %s", argv[1]);
-	}
-}
-
-static void l511_chat_on_cgatt(struct modem_chat *chat, char **argv, uint16_t argc,
-			       void *user_data)
-{
-	ARG_UNUSED(chat);
-	ARG_UNUSED(user_data);
-
-	if (argc >= 2U) {
-		LOG_DBG("AT: +CGATT: %s", argv[1]);
-	}
-}
-
 MODEM_CHAT_MATCH_DEFINE(ok_match, "OK", "", NULL);
 MODEM_CHAT_MATCH_DEFINE(connect_match, "CONNECT", "", NULL);
-MODEM_CHAT_MATCH_DEFINE(any_line_match, "", "", l511_chat_on_line);
-MODEM_CHAT_MATCH_DEFINE(cpin_match, "+CPIN: ", "", l511_chat_on_cpin);
-MODEM_CHAT_MATCH_DEFINE(csq_match, "+CSQ: ", ",", l511_chat_on_csq);
+MODEM_CHAT_MATCH_DEFINE(any_line_match, "", "", l511_chat_on_info);
+MODEM_CHAT_MATCH_DEFINE(cpin_match, "+CPIN: ", "", l511_chat_on_info);
+MODEM_CHAT_MATCH_DEFINE(csq_match, "+CSQ: ", "", l511_chat_on_info);
 MODEM_CHAT_MATCH_DEFINE(cereg_match, "+CEREG: ", ",", l511_chat_on_cereg);
-MODEM_CHAT_MATCH_DEFINE(eciccid_match, "+ECICCID: ", "", l511_chat_on_eciccid);
-MODEM_CHAT_MATCH_DEFINE(cgatt_match, "+CGATT: ", "", l511_chat_on_cgatt);
+MODEM_CHAT_MATCH_DEFINE(eciccid_match, "+ECICCID: ", "", l511_chat_on_info);
+MODEM_CHAT_MATCH_DEFINE(cgatt_match, "+CGATT: ", "", l511_chat_on_info);
 
 MODEM_CHAT_MATCHES_DEFINE(abort_matches,
 			  MODEM_CHAT_MATCH("ERROR", "", NULL),
@@ -253,46 +212,6 @@ MODEM_CHAT_SCRIPT_DEFINE(dial_script, dial_script_cmds, abort_matches, NULL,
 			 CONFIG_MODEM_LYNQ_L511_DIAL_TIMEOUT_SEC);
 
 /* ------------------------------------------------------------------------- */
-/* Boot banner drain                                                         */
-/* ------------------------------------------------------------------------- */
-
-/* Drain and discard unsolicited bytes (power-on banner, early URCs) until the
- * UART has been idle for @idle_ms, so they don't confuse the first AT script.
- */
-static void l511_drain_boot_banner(struct l511_data *data, int idle_ms)
-{
-	uint8_t scratch[64];
-	int64_t deadline = k_uptime_get() + idle_ms;
-
-	while (k_uptime_get() < deadline) {
-		int ret = modem_pipe_receive(data->pipe, scratch, sizeof(scratch));
-
-		if (ret < 0) {
-			break;
-		}
-		if (ret == 0) {
-			k_msleep(5);
-			continue;
-		}
-		deadline = k_uptime_get() + idle_ms;
-	}
-}
-
-static int l511_chat_run(struct l511_data *data, const struct modem_chat_script *script)
-{
-	int ret;
-
-	ret = modem_chat_attach(&data->chat, data->pipe);
-	if (ret < 0) {
-		return ret;
-	}
-
-	ret = modem_chat_run_script(&data->chat, script);
-	modem_chat_release(&data->chat);
-	return ret;
-}
-
-/* ------------------------------------------------------------------------- */
 /* Bring-up                                                                  */
 /* ------------------------------------------------------------------------- */
 
@@ -308,7 +227,7 @@ static int l511_run_init(struct l511_data *data)
 {
 	int ret;
 
-	ret = l511_chat_run(data, &init_script);
+	ret = modem_chat_run_script(&data->chat, &init_script);
 	if (ret < 0) {
 		LOG_ERR("init script failed: %d", ret);
 		return ret;
@@ -322,19 +241,19 @@ static int l511_network_ready(struct l511_data *data)
 	int ret;
 
 	data->registered = false;
-	ret = l511_chat_run(data, &sim_script);
+	ret = modem_chat_run_script(&data->chat, &sim_script);
 	if (ret < 0) {
 		LOG_WRN("SIM not ready (%d)", ret);
 		return -ENODEV;
 	}
 
-	ret = l511_chat_run(data, &signal_script);
+	ret = modem_chat_run_script(&data->chat, &signal_script);
 	if (ret < 0) {
 		LOG_WRN("signal query failed (%d)", ret);
 		return ret;
 	}
 
-	ret = l511_chat_run(data, &registration_script);
+	ret = modem_chat_run_script(&data->chat, &registration_script);
 	if (ret < 0) {
 		LOG_WRN("registration query failed (%d)", ret);
 		return ret;
@@ -344,13 +263,13 @@ static int l511_network_ready(struct l511_data *data)
 		return -EAGAIN;
 	}
 
-	ret = l511_chat_run(data, &identity_script);
+	ret = modem_chat_run_script(&data->chat, &identity_script);
 	if (ret < 0) {
 		LOG_WRN("SIM identity query failed (%d)", ret);
 		return ret;
 	}
 
-	ret = l511_chat_run(data, &attach_script);
+	ret = modem_chat_run_script(&data->chat, &attach_script);
 	if (ret < 0) {
 		LOG_WRN("packet attach/PDP setup failed (%d)", ret);
 		return ret;
@@ -362,7 +281,7 @@ static int l511_network_ready(struct l511_data *data)
 static int l511_dial(struct l511_data *data)
 {
 	LOG_DBG("AT: ATD*99#");
-	return l511_chat_run(data, &dial_script);
+	return modem_chat_run_script(&data->chat, &dial_script);
 }
 
 static int l511_bringup(const struct device *dev)
@@ -383,13 +302,21 @@ static int l511_bringup(const struct device *dev)
 	LOG_DBG("pipe open");
 
 	l511_power_on(cfg);
-	l511_drain_boot_banner(data, cfg->boot_drain_timeout_ms);
 	k_msleep(cfg->at_ready_delay_ms);
+
+	/* Attach the chat handler once for the whole AT sequence; the leading
+	 * AT/ATE0 commands in init_script absorb any power-on banner noise.
+	 */
+	ret = modem_chat_attach(&data->chat, data->pipe);
+	if (ret < 0) {
+		LOG_ERR("chat attach failed: %d", ret);
+		goto close_pipe;
+	}
 
 	ret = l511_run_init(data);
 	if (ret < 0) {
 		LOG_ERR("init failed: %d", ret);
-		goto close_pipe;
+		goto release_chat;
 	}
 
 	ret = -ETIMEDOUT;
@@ -431,15 +358,18 @@ static int l511_bringup(const struct device *dev)
 			LOG_WRN("network readiness failed after %d retries (%d)",
 				CONFIG_MODEM_LYNQ_L511_REGISTRATION_RETRY_COUNT, ret);
 		}
-		goto close_pipe;
+		goto release_chat;
 	}
 	LOG_INF("registered");
 
 	ret = l511_dial(data);
 	if (ret < 0) {
 		LOG_ERR("dial failed: %d", ret);
-		goto close_pipe;
+		goto release_chat;
 	}
+
+	/* CONNECT matched: release the chat handler and hand the pipe to PPP. */
+	modem_chat_release(&data->chat);
 
 	ret = modem_ppp_attach(cfg->ppp, data->pipe);
 	if (ret < 0) {
@@ -465,6 +395,9 @@ release_ppp:
 	modem_ppp_release(cfg->ppp);
 	net_if_carrier_off(iface);
 	net_if_dormant_on(iface);
+	goto close_pipe;
+release_chat:
+	modem_chat_release(&data->chat);
 close_pipe:
 	(void)modem_pipe_close(data->pipe, K_MSEC(1000));
 	LOG_DBG("pipe closed after failed bring-up (%d)", ret);
@@ -596,7 +529,6 @@ static int l511_init(const struct device *dev)
 		.power_gpio = GPIO_DT_SPEC_INST_GET(inst, mdm_power_gpios),		\
 		.reset_gpio = GPIO_DT_SPEC_INST_GET(inst, mdm_reset_gpios),		\
 		.reset_pulse_ms = DT_INST_PROP(inst, reset_pulse_ms),			\
-		.boot_drain_timeout_ms = DT_INST_PROP(inst, boot_drain_timeout_ms),	\
 		.at_ready_delay_ms = DT_INST_PROP(inst, at_ready_delay_ms),		\
 		.ppp = &l511_ppp_##inst,						\
 	};										\
