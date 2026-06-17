@@ -9,6 +9,17 @@ config SOC_SERIES_GD32F5XX
 	select ARMV8_M_DSP
 	select GD32_HAS_AF_PINMUX
 	select SOC_EARLY_INIT_HOOK
+
+config GD32F5XX_SRAM_ECC_SCRUB
+	bool "Scrub TCMSRAM and SRAM before reset init"
+	default y if SOC_GD32F527
 	select SOC_EARLY_RESET_HOOK
+	help
+	  GD32F527-specific: zero the full TCMSRAM and SRAM ranges in an early
+	  reset hook, before the C runtime touches RAM-backed stacks, to prime
+	  the SRAM ECC state (mirrors GigaDevice's startup code). The hook hard-
+	  codes the F527 memory map, so it must only be enabled on that part.
+	  Note: this runs on every reset and does not preserve any RAM contents
+	  across a warm reset (no .noinit retention).
 
 rsource "Kconfig.clocks"
