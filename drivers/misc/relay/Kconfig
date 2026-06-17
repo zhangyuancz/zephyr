@@ -21,7 +21,7 @@ config RELAY_INIT_PRIORITY
 	  GPIO driver.
 
 module = RELAY
-module-str = RELAY
+module-str = relay
 source "subsys/logging/Kconfig.template.log_config"
 
 endif # RELAY

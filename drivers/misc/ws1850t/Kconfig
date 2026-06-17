@@ -22,7 +22,7 @@ config WS1850T_INIT_PRIORITY
 	  the UART and GPIO drivers.
 
 module = WS1850T
-module-str = WS1850T
+module-str = ws1850t
 source "subsys/logging/Kconfig.template.log_config"
 
 endif # WS1850T
