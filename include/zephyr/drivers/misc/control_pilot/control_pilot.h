@@ -65,14 +65,29 @@ int cp_set_duty(const struct device *dev, uint16_t permille);
 uint16_t cp_get_duty(const struct device *dev);
 
 /**
- * @brief Sample the control pilot and fill a status snapshot.
+ * @brief Copy the most recent control-pilot snapshot.
+ *
+ * Non-blocking: a driver-owned thread continuously acquires the CP voltage,
+ * diode and PWM feedback in the background and caches the result, so the
+ * hardware-triggered ADC latency never lands on the caller (the control loop).
  *
  * @param dev CP device.
- * @param status Output snapshot.
+ * @param status Output snapshot (latest cached value).
  *
- * @retval 0 on success, negative errno on a measurement error.
+ * @retval 0 on success, -EAGAIN if no sample has been taken yet.
  */
 int cp_read(const struct device *dev, struct cp_status *status);
+
+/**
+ * @brief Age of the cached snapshot in milliseconds.
+ *
+ * @param dev CP device.
+ *
+ * @return Milliseconds since the last successful sample, or UINT32_MAX if no
+ *         sample has been taken yet. The control loop uses this to reject a
+ *         stale snapshot.
+ */
+uint32_t cp_sample_age_ms(const struct device *dev);
 
 /**
  * @brief Return a short string for a CP state ("A".."E", "?").

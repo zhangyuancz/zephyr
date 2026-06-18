@@ -40,12 +40,22 @@ struct cp_config {
 	bool has_feedback;
 	uint32_t full_scale_mv;
 	uint16_t default_duty;
+	k_thread_stack_t *thread_stack;
+	size_t thread_stack_size;
 };
 
 struct cp_data {
 	struct k_mutex lock;
 	uint16_t duty_permille;
 	uint16_t samples[CP_SAMPLE_COUNT];
+
+	/* Cached snapshot published by the sampling thread, read by cp_read(). */
+	struct k_spinlock snap_lock;
+	struct cp_status snapshot;
+	int64_t snapshot_uptime; /* k_uptime_get() of the last good sample */
+	bool snapshot_valid;
+
+	struct k_thread thread;
 };
 
 const char *cp_state_str(enum cp_state state)
@@ -174,7 +184,8 @@ static bool cp_feedback_read(const struct device *dev, uint32_t *freq_hz, uint16
 #endif /* CONFIG_PWM_CAPTURE */
 }
 
-int cp_read(const struct device *dev, struct cp_status *status)
+/* Blocking acquisition; runs only on the driver's sampling thread. */
+static int cp_acquire(const struct device *dev, struct cp_status *status)
 {
 	const struct cp_config *cfg = dev->config;
 	struct cp_data *data = dev->data;
@@ -207,6 +218,64 @@ int cp_read(const struct device *dev, struct cp_status *status)
 	return 0;
 }
 
+int cp_read(const struct device *dev, struct cp_status *status)
+{
+	struct cp_data *data = dev->data;
+	k_spinlock_key_t key;
+	bool valid;
+
+	key = k_spin_lock(&data->snap_lock);
+	valid = data->snapshot_valid;
+	if (valid) {
+		*status = data->snapshot;
+	}
+	k_spin_unlock(&data->snap_lock, key);
+
+	return valid ? 0 : -EAGAIN;
+}
+
+uint32_t cp_sample_age_ms(const struct device *dev)
+{
+	struct cp_data *data = dev->data;
+	k_spinlock_key_t key;
+	int64_t uptime;
+	bool valid;
+
+	key = k_spin_lock(&data->snap_lock);
+	valid = data->snapshot_valid;
+	uptime = data->snapshot_uptime;
+	k_spin_unlock(&data->snap_lock, key);
+
+	if (!valid) {
+		return UINT32_MAX;
+	}
+
+	return (uint32_t)(k_uptime_get() - uptime);
+}
+
+static void cp_sample_thread(void *p1, void *p2, void *p3)
+{
+	const struct device *dev = p1;
+	struct cp_data *data = dev->data;
+	struct cp_status status;
+
+	ARG_UNUSED(p2);
+	ARG_UNUSED(p3);
+
+	for (;;) {
+		if (cp_acquire(dev, &status) == 0) {
+			k_spinlock_key_t key = k_spin_lock(&data->snap_lock);
+
+			data->snapshot = status;
+			data->snapshot_uptime = k_uptime_get();
+			data->snapshot_valid = true;
+			k_spin_unlock(&data->snap_lock, key);
+		}
+
+		k_sleep(K_MSEC(CONFIG_CONTROL_PILOT_SAMPLE_INTERVAL_MS));
+	}
+}
+
 static int cp_init(const struct device *dev)
 {
 	const struct cp_config *cfg = dev->config;
@@ -237,7 +306,20 @@ static int cp_init(const struct device *dev)
 		return ret;
 	}
 
-	return cp_set_duty(dev, cfg->default_duty);
+	data->snapshot_valid = false;
+
+	ret = cp_set_duty(dev, cfg->default_duty);
+	if (ret < 0) {
+		return ret;
+	}
+
+	/* Background sampling thread keeps a fresh snapshot off the control loop. */
+	k_thread_create(&data->thread, cfg->thread_stack, cfg->thread_stack_size,
+			cp_sample_thread, (void *)dev, NULL, NULL,
+			CONFIG_CONTROL_PILOT_THREAD_PRIORITY, 0, K_NO_WAIT);
+	k_thread_name_set(&data->thread, "cp_sample");
+
+	return 0;
 }
 
 #define CP_INIT(inst)									\
@@ -245,6 +327,9 @@ static int cp_init(const struct device *dev)
 		     "control-pilot requires at least the cp PWM");			\
 											\
 	static struct cp_data cp_data_##inst;						\
+											\
+	static K_THREAD_STACK_DEFINE(cp_stack_##inst,					\
+				     CONFIG_CONTROL_PILOT_THREAD_STACK_SIZE);		\
 											\
 	static const struct cp_config cp_config_##inst = {				\
 		.pwm = PWM_DT_SPEC_INST_GET_BY_NAME(inst, cp),				\
@@ -254,6 +339,8 @@ static int cp_init(const struct device *dev)
 		.diode = GPIO_DT_SPEC_INST_GET(inst, diode_gpios),			\
 		.full_scale_mv = DT_INST_PROP(inst, full_scale_millivolt),		\
 		.default_duty = DT_INST_PROP(inst, default_duty_permille),		\
+		.thread_stack = cp_stack_##inst,					\
+		.thread_stack_size = K_THREAD_STACK_SIZEOF(cp_stack_##inst),		\
 	};										\
 											\
 	DEVICE_DT_INST_DEFINE(inst, cp_init, NULL,					\

@@ -22,6 +22,27 @@ config CONTROL_PILOT_INIT_PRIORITY
 	  Control-pilot driver initialization priority in POST_KERNEL. Must be
 	  after the PWM, ADC and GPIO drivers.
 
+config CONTROL_PILOT_SAMPLE_INTERVAL_MS
+	int "Control-pilot background sample interval (ms)"
+	default 10
+	help
+	  Period of the driver-owned sampling thread that acquires the CP
+	  positive-peak voltage, diode and PWM feedback and caches a snapshot.
+	  cp_read() returns that cached snapshot without blocking, so the
+	  hardware-triggered ADC acquisition latency never lands on the control
+	  thread.
+
+config CONTROL_PILOT_THREAD_STACK_SIZE
+	int "Control-pilot sampling thread stack size"
+	default 1024
+
+config CONTROL_PILOT_THREAD_PRIORITY
+	int "Control-pilot sampling thread priority"
+	default 6
+	help
+	  Priority of the CP sampling thread. It does the blocking ADC work off
+	  the control thread while keeping the cached snapshot fresh.
+
 module = CONTROL_PILOT
 module-str = control_pilot
 source "subsys/logging/Kconfig.template.log_config"
