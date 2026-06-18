@@ -135,8 +135,18 @@ static int cp_measure_peak(const struct device *dev, uint16_t *peak_raw)
 static bool cp_feedback_read(const struct device *dev, uint32_t *freq_hz, uint16_t *permille)
 {
 	const struct cp_config *cfg = dev->config;
+	struct cp_data *data = dev->data;
 
 	if (!cfg->has_feedback || !IS_ENABLED(CONFIG_PWM_CAPTURE)) {
+		return false;
+	}
+
+	/*
+	 * Only meaningful while the CP is actually oscillating. At duty 0% or 100%
+	 * the output is DC (no edges), so a capture would just block until it times
+	 * out. Skip the feedback read in those states.
+	 */
+	if (data->duty_permille == 0U || data->duty_permille >= 1000U) {
 		return false;
 	}
 
