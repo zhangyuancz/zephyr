@@ -3,7 +3,7 @@ name: ACBoard-F527
 type: mcu
 arch: arm
 ram: 512
-flash: 2048
+flash: 4096
 toolchain:
   - zephyr
   - gnuarmemb
