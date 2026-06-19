@@ -17,12 +17,12 @@ The CP node wires these ACBoard signals:
 * ``PC1 / ADC0_CH11``: CP voltage feedback
 * ``PC2``: CP diode detection input
 
-The driver owns the PWM, ADC, capture, and diode GPIO. It samples the
-hardware-triggered ADC, converts the positive peak to a real CP voltage using
-``full-scale-millivolt`` (ADC reference / sense-divider ratio), and classifies
-the IEC 61851 state (A..E). The application registers nothing extra: it sets the
-duty from the console and prints the state, voltage, diode, and PWM feedback
-every 500 ms.
+The driver owns the PWM, ADC, capture, and diode GPIO. ADC and PWM capture run
+continuously from hardware-triggered interrupts; each read copies their latest
+complete values without waiting. The driver converts the positive level to a real
+CP voltage using ``adc-reference-millivolt`` and the actual values in
+``sense-divider-resistors-ohms``, then classifies the GB/T 18487.1 state (0
+through 4, including PWM prime states).
 
 Build and flash
 ***************
@@ -35,7 +35,7 @@ Build and flash
 Console commands
 ****************
 
-* ``0``: 0% duty
+* ``0``: 0% duty (continuous -12 V / state 4)
 * ``1``: 100% duty (constant +12 V, standby)
 * ``2``: 53% duty (advertises ~32 A)
 * ``3``: 10% duty

@@ -17,16 +17,44 @@
 
 static const struct device *const cp = DEVICE_DT_GET_ONE(zephyr_control_pilot);
 static const struct device *const console = DEVICE_DT_GET(DT_CHOSEN(zephyr_console));
+static uint16_t commanded_duty = 1000U;
+
+static const char *state_str(enum cp_state state)
+{
+	switch (state) {
+	case CP_STATE_0:
+		return "0";
+	case CP_STATE_1:
+		return "1";
+	case CP_STATE_1_PRIME:
+		return "1'";
+	case CP_STATE_2:
+		return "2";
+	case CP_STATE_2_PRIME:
+		return "2'";
+	case CP_STATE_3:
+		return "3";
+	case CP_STATE_3_PRIME:
+		return "3'";
+	case CP_STATE_4:
+		return "4";
+	case CP_STATE_INVALID:
+		return "invalid";
+	case CP_STATE_UNKNOWN:
+	default:
+		return "?";
+	}
+}
 
 static void print_help(void)
 {
-	printk("Commands: 0=off, 1=100%%, 2=53%%, 3=10%%, +=+1%%, -=-1%%, h=help\n");
+	printk("Commands: 0=state4, 1=100%%, 2=53%%, 3=10%%, +=+1%%, -=-1%%, h=help\n");
 }
 
 static void handle_console(void)
 {
 	unsigned char ch;
-	uint16_t duty = cp_get_duty(cp);
+	uint16_t duty = commanded_duty;
 	int ret;
 
 	if (uart_poll_in(console, &ch) != 0) {
@@ -64,6 +92,7 @@ static void handle_console(void)
 	if (ret < 0) {
 		printk("CP set duty failed: %d\n", ret);
 	} else {
+		commanded_duty = duty;
 		printk("CP duty=%u.%u%%\n", duty / 10U, duty % 10U);
 	}
 }
@@ -87,15 +116,15 @@ int main(void)
 
 		ret = cp_read(cp, &status);
 		if (ret < 0) {
-			printk("CP set=%u.%u%% read failed: %d\n",
-			       cp_get_duty(cp) / 10U, cp_get_duty(cp) % 10U, ret);
+			printk("CP set=%u.%u%% read failed: %d\n", commanded_duty / 10U,
+			       commanded_duty % 10U, ret);
 			k_sleep(CP_REPORT_INTERVAL);
 			continue;
 		}
 
 		printk("CP set=%u.%u%% state=%s voltage=%d mV diode=%d",
 		       status.duty_permille / 10U, status.duty_permille % 10U,
-		       cp_state_str(status.state), status.voltage_mv, status.diode_present);
+		       state_str(status.state), status.voltage_mv, status.diode_present);
 		if (status.feedback_valid) {
 			printk(" pwm_feedback=%uHz/%u.%u%%", status.feedback_hz,
 			       status.feedback_permille / 10U, status.feedback_permille % 10U);

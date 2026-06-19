@@ -2,7 +2,7 @@ identifier: acboard_f527
 name: ACBoard-F527
 type: mcu
 arch: arm
-ram: 512
+ram: 1024
 flash: 4096
 toolchain:
   - zephyr

@@ -16,8 +16,9 @@
 		pwm-names = "cp", "feedback";
 		io-channels = <&adc0 11>;
 		diode-gpios = <&gpioc 2 GPIO_ACTIVE_HIGH>;
-		/* CP voltage at ADC full scale = Vref(3.3V) / divider(0.258). */
-		full-scale-millivolt = <12790>;
+		adc-reference-millivolt = <3300>;
+		/* CP-to-sense upper resistor, then sense-to-ground lower resistor. */
+		sense-divider-resistors-ohms = <430000 150000>;
 	};
 };
 

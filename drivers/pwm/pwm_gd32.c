@@ -109,6 +109,8 @@ static void pwm_gd32_update_auxiliary(const struct pwm_gd32_config *config,
 	auxiliary_pulse = (uint32_t)(((uint64_t)pulse_cycles *
 				       config->auxiliary_ratio_numerator) /
 				      config->auxiliary_ratio_denominator);
+	/* Keep the compare event alive when the source PWM is at 0% duty. */
+	auxiliary_pulse = MAX(auxiliary_pulse, 1U);
 	pwm_gd32_set_compare(config->reg, auxiliary_channel, auxiliary_pulse);
 	chctl = auxiliary_channel < 2U ? &TIMER_CHCTL0(config->reg) :
 					       &TIMER_CHCTL1(config->reg);
