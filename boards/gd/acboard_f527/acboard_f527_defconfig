@@ -1,6 +1,14 @@
 # Copyright (c) 2026
 # SPDX-License-Identifier: Apache-2.0
 
+# 200 MHz system clock source (GD32_F5XX_SYSCLK_SRC choice). Set here in the
+# board defconfig so it applies to BOTH the MCUboot and app images (the
+# bootloader runs the clock bring-up first) -- a prj.conf overlay would only
+# reach the app image. Enable exactly one of:
+#   CONFIG_GD32_F5XX_CLOCK_200M_8M_HXTAL=y   external 8 MHz crystal (accurate, production)
+#   CONFIG_GD32_F5XX_CLOCK_200M_IRC16M=y     internal RC, crystal-independent (~1%, bring-up/fallback)
+CONFIG_GD32_F5XX_CLOCK_200M_IRC16M=y
+
 CONFIG_ARM_MPU=y
 
 CONFIG_CONSOLE=y

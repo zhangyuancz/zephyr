@@ -1,7 +1,30 @@
 # Copyright (c) 2026
 # SPDX-License-Identifier: Apache-2.0
 
-config GD32_F5XX_CLOCK_200M_8M_HXTAL
-	bool
+choice GD32_F5XX_SYSCLK_SRC
+	prompt "GD32F5xx 200 MHz system clock source"
+	default GD32_F5XX_CLOCK_200M_8M_HXTAL
 	help
-	  Configure the system clock to 200 MHz using an 8 MHz HXTAL.
+	  Selects the oscillator that feeds the 200 MHz main PLL. The choice maps
+	  to a __SYSTEM_CLOCK_* compile define in
+	  zephyr/modules/hal_gigadevice/CMakeLists.txt, consumed by the HAL's
+	  system_clock_config().
+
+config GD32_F5XX_CLOCK_200M_8M_HXTAL
+	bool "200 MHz from 8 MHz HXTAL (external crystal)"
+	help
+	  Configure the system clock to 200 MHz using an external 8 MHz HXTAL
+	  crystal. Accurate, production default, but depends on the external
+	  crystal starting reliably. If the crystal fails to oscillate the HAL
+	  SystemInit() dead-loops before the app runs.
+
+config GD32_F5XX_CLOCK_200M_IRC16M
+	bool "200 MHz from internal IRC16M (no external crystal)"
+	help
+	  Configure the system clock to 200 MHz using the internal 16 MHz RC
+	  oscillator, removing the external crystal dependency. IRC16M is only
+	  ~1% accurate and drifts with temperature, so avoid this where high-baud
+	  UART, USB, or CAN timing must be precise. Useful for board bring-up or
+	  as a fallback when the external crystal is suspect.
+
+endchoice

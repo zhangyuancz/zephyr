@@ -24,6 +24,11 @@ zephyr_compile_definitions(${gd32_soc_uc})
 # The HXTAL_VALUE has the possibility of being referenced from any files
 # via that header files.
 # Therefore, we need to define HXTAL_VALUE for all compilations.
+#
+# Note: the HXTAL_VALUE_8M / HXTAL_VALUE_25M aliases below are *only* consumed
+# by the gd32e10x / gd32vf103 HAL headers to pick their clock path; the gd32f5xx
+# series ignores them (it uses the __SYSTEM_CLOCK_* define set further down). So
+# on F5xx a "_25M" macro defined to 8000000 is harmless and expected.
 if(${CONFIG_GD32_HXTAL_8MHZ})
   zephyr_compile_definitions(HXTAL_VALUE=8000000 HXTAL_VALUE_25M=8000000)
 elseif(${CONFIG_GD32_HXTAL_25MHZ})
@@ -54,9 +59,15 @@ if(${CONFIG_SOC_SERIES_GD32A50X})
   zephyr_compile_definitions(GD32A50X)
 endif()
 
-# GD32F527 clock configuration validated on ACBoard-F527.
+# GD32F527 200 MHz system clock source (GD32_F5XX_SYSCLK_SRC choice in
+# soc/.../Kconfig.clocks). This injects exactly one __SYSTEM_CLOCK_* macro; the
+# HAL's system_clock_config() in system_gd32f5xx.c then selects the matching
+# clock-setup routine through an #if/#elif chain. That chain matches IRC16M
+# variants before HXTAL, so never define more than one of these.
 if(CONFIG_GD32_F5XX_CLOCK_200M_8M_HXTAL)
   zephyr_compile_definitions(__SYSTEM_CLOCK_200M_PLL_8M_HXTAL=200000000)
+elseif(CONFIG_GD32_F5XX_CLOCK_200M_IRC16M)
+  zephyr_compile_definitions(__SYSTEM_CLOCK_200M_PLL_IRC16M=200000000)
 endif()
 
 # Global includes to be used outside hal_gigadevice

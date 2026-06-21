@@ -3,4 +3,6 @@
 
 config BOARD_ACBOARD_F527
 	select SOC_GD32F527
-	select GD32_F5XX_CLOCK_200M_8M_HXTAL
+	# System clock source is the GD32_F5XX_SYSCLK_SRC choice (Kconfig.clocks);
+	# choice members cannot be 'select'ed here. The board pins it in
+	# acboard_f527_defconfig (which reaches both the MCUboot and app images).
