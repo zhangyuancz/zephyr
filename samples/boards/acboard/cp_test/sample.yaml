@@ -2,7 +2,6 @@ sample:
   name: ACBoard control pilot test
 common:
   platform_allow:
-    - acboard
     - acboard_f527
   tags:
     - adc
